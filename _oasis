@@ -1,0 +1,31 @@
+OASISFormat: 0.2
+Name:        test
+Version:     0.1
+Synopsis:    Test the xen-api client
+Authors:     Jon Ludlam
+License:     LGPL-2.1 with OCaml linking exception
+Plugins:     META (0.2)
+BuildTools:  ocamlbuild
+
+Library xsops
+  CompiledObject: best
+  Path: lib
+  Findlibname: xsops
+  Modules: Host, Blob, Xs_ops, Vxs, Utils
+  BuildDepends: camltemplate, xmlm, cohttp, rpclib, xen-api-client
+
+Executable            vxs_script_executer
+  CompiledObject:     best
+  Path:               .
+  MainIs:             vxs_script_executer.ml
+  Install:            false
+  Custom:             true
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
+
+Executable            test
+  CompiledObject:     best
+  Path:               .
+  MainIs:             test.ml
+  Install:            false
+  Custom:             true
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt

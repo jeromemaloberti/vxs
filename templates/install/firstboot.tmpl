@@ -1,0 +1,10 @@
+\#!/bin/bash
+
+. /etc/xensource-inventory
+
+firstboot_blob=`xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$INSTALLATION_UUID param-name=other-config param-key=firstboot.sh`
+curl http://${host}/blob?uuid=$firstboot_blob -o /tmp/firstboot.sh
+chmod 755 /tmp/firstboot.sh
+/tmp/firstboot.sh
+rm /tmp/firstboot.sh
+

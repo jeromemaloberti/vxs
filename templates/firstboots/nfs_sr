@@ -1,0 +1,3 @@
+#!/bin/bash
+
+xe sr-create type=nfs device-config:server=devstore1.uk.xensource.com device-config:serverpath=/devnfs0/vxs shared=true name-label=nfs

@@ -1,0 +1,39 @@
+\#!/bin/bash
+\# Remove the host/control domain uuids from the inventory and construct new ones
+\# The host one comes from the underlying VM uuid, the control domain is random
+
+set -e
+
+stamp=/var/lib/xcp/veryfirst
+
+\# Bring up networking temporarily and get and upgrade any RPMs we need
+dhclient eth0 > /dev/null
+
+if [ ! -e $stamp ]; then
+   grep -v "INSTALLATION_UUID" /etc/xensource-inventory > /tmp/xensource-inventory2
+   grep -v "CONTROL_DOMAIN_UUID" /tmp/xensource-inventory2 > /tmp/xensource-inventory
+   mv /tmp/xensource-inventory /etc/
+   host=`dmidecode | grep UUID | awk '{print $2}' | tr [:upper:] [:lower:]`
+   echo "INSTALLATION_UUID='$host'" >> /etc/xensource-inventory
+   control=`uuidgen`
+   echo "CONTROL_DOMAIN_UUID='$control'" >> /etc/xensource-inventory
+
+   hostname=`xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=name-label`
+   /opt/xensource/libexec/set-hostname $hostname
+
+   echo ${host} > /etc/vxs_host
+   echo ${username} > /etc/vxs_username
+   echo ${password} > /etc/vxs_password
+
+   touch $stamp
+fi
+
+for i in `xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=other-config param-key=rpm-blobs | sed s/,/\ /g`
+do
+    curl -o /tmp/$i.rpm http://${host}/blob?uuid=$i
+done
+rpm -Uvh --force --nodeps /tmp/*.rpm &> /tmp/install.log
+xe -s ${host} -u ${username} -pw ${password} vm-param-set uuid=$host other-config:rpm-blobs=
+
+killall -9 dhclient
+ifconfig eth0 0.0.0.0 down

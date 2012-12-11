@@ -1,0 +1,53 @@
+\#!/usr/bin/python
+
+import urllib2
+import os
+import sys
+import xmlrpclib
+
+def get_build_number():
+    buildnum = None
+    f = open("%s/etc/xensource-inventory" % sys.argv[1], 'r')
+    for line in f.readlines():
+        if line.startswith("BUILD_NUMBER"):
+            buildnum = line.split("'")[1]
+    f.close()
+    return buildnum
+
+u = urllib2.urlopen("http://${host}/blob?uuid=${initscript_uuid}")
+localFile = open('%s/etc/init.d/iptoxenserver' % sys.argv[1], 'w')
+localFile.write(u.read())
+localFile.close()
+os.chmod("%s/etc/init.d/iptoxenserver" % sys.argv[1],0755)
+os.symlink("../init.d/iptoxenserver","%s/etc/rc3.d/S99iptoxenserver" % sys.argv[1])
+
+u = urllib2.urlopen("http://${host}/blob?uuid=${veryfirstboot_uuid}")
+localFile = open('%s/etc/init.d/veryfirstboot' % sys.argv[1], 'w')
+localFile.write(u.read())
+localFile.close()
+os.chmod("%s/etc/init.d/veryfirstboot" % sys.argv[1],0755)
+os.symlink("../init.d/veryfirstboot","%s/etc/rc3.d/S01veryfirstboot" % sys.argv[1])
+
+u = urllib2.urlopen("http://${host}/blob?uuid=${firstboot_uuid}")
+localFile = open('%s/etc/firstboot.d/91-firstboot' % sys.argv[1], 'w')
+localFile.write(u.read())
+localFile.close()
+os.chmod("%s/etc/firstboot.d/91-firstboot" % sys.argv[1],0755)
+
+buildnum=get_build_number()
+print "Build number: %s" % buildnum
+s=xmlrpclib.Server("http://${host}/")
+sess=s.session.login_with_password("${username}","${password}")['Value']
+vm=s.VM.get_by_uuid(sess,"${vm_uuid}")['Value']
+s.VM.set_name_label(sess,vm,"${branch}-%s" % buildnum)
+s.session.logout(sess)
+try:
+	u = urllib2.urlopen("http://${host}/blob?uuid=${id_dsa_uuid}")
+	localFile = open('%s/root/.ssh/authorized_keys' % sys.argv[1], 'w')
+	localFile.write(u.read())
+	localFile.close()
+	os.chmod("%s/root/.ssh/authorized_keys" % sys.argv[1],0600)
+except:
+	pass
+
+

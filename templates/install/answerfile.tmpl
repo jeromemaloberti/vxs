@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<installation>
+  <primary-disk>sda</primary-disk>
+  <keymap>uk</keymap>
+  <root-password>${vxs_root_password}</root-password>
+  <source type="url">http://www.uk.xensource.com/${branch}/</source>
+  <ntp-servers>ntp.uk.xensource.com</ntp-servers>
+  <admin-interface name="eth0" proto="dhcp" />
+  <timezone>Europe/London</timezone>
+  <script stage="filesystem-populated" type="url">http://${host}/blob?uuid=${post_install_uuid}</script>
+</installation>
