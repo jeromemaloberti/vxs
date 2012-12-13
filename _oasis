@@ -1,7 +1,7 @@
 OASISFormat: 0.2
-Name:        test
+Name:        vxs
 Version:     0.1
-Synopsis:    Test the xen-api client
+Synopsis:    Virtual XenServer Management
 Authors:     Jon Ludlam
 License:     LGPL-2.1 with OCaml linking exception
 Plugins:     META (0.2)
@@ -22,10 +22,10 @@ Executable            vxs_script_executer
   Custom:             true
   BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
 
-Executable            test
+Executable            vxs_fe
   CompiledObject:     best
   Path:               .
-  MainIs:             test.ml
+  MainIs:             vxs_fe.ml
   Install:            false
   Custom:             true
   BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt

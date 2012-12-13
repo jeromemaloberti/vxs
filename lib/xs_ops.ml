@@ -25,8 +25,6 @@ open CamlTemplate.Model
 
 let pxedir = "/usr/groups/netboot/pxelinux.cfg"
 
-
-
 (* API:
  *
  * Vxs.template_create : host_config -> branch:string -> uuid:string
@@ -35,47 +33,46 @@ let pxedir = "/usr/groups/netboot/pxelinux.cfg"
  * 
  *)
 
-
 type vxs_template_config = {
-	branch : string;              (* e.g. trunk-ring3 *)
-
-	vm_uuid : string;                  (* VM uuid *)
-	vxs_root_password : string; 
-
-	post_install : Blob.t;   (* Called by the host installer *)
-	initscript : Blob.t;     (* Called on firstboot before firstboot
-							  scripts! (sets host/dom0 uuid) *)
-	veryfirstboot : Blob.t;  (* Installed into firstboot.d *)
-	firstboot : Blob.t; 
-	id_dsa : Blob.t;
-	answerfile : Blob.t;     (* Host installer answerfile *)
+	  branch : string;              (* e.g. trunk-ring3 *)
+    
+	  vm_uuid : string;                  (* VM uuid *)
+	  vxs_root_password : string; 
+    
+	  post_install : Blob.t;   (* Called by the host installer *)
+	  initscript : Blob.t;     (* Called on firstboot before firstboot
+							                  scripts! (sets host/dom0 uuid) *)
+	  veryfirstboot : Blob.t;  (* Installed into firstboot.d *)
+	  firstboot : Blob.t; 
+	  id_dsa : Blob.t;
+	  answerfile : Blob.t;     (* Host installer answerfile *)
 }
 
 type vxs_pool_config = {
-	n : int;
-	name : string;
-	networks : int;
+	  n : int;
+	  name : string;
+	  networks : int;
 }
 
 let create_hash host vxs =
 	let h = Hashtbl.create 10 in
 	let l = ["branch",vxs.branch;
-			 "host",host.host;
-			 "username",host.username;
-			 "password",host.password;
-			 "vm_uuid",vxs.vm_uuid;
-			 "vxs_root_password",vxs.vxs_root_password;
-			 "post_install_uuid",vxs.post_install.Blob.u;
-			 "initscript_uuid",vxs.initscript.Blob.u;
-			 "veryfirstboot_uuid",vxs.veryfirstboot.Blob.u;
-			 "firstboot_uuid",vxs.firstboot.Blob.u;
-			 "id_dsa_uuid",vxs.id_dsa.Blob.u;
-			 "answerfile_uuid",vxs.answerfile.Blob.u;] in
+			     "host",host.host;
+			     "username",host.username;
+			     "password",host.password;
+			     "vm_uuid",vxs.vm_uuid;
+			     "vxs_root_password",vxs.vxs_root_password;
+			     "post_install_uuid",vxs.post_install.Blob.u;
+			     "initscript_uuid",vxs.initscript.Blob.u;
+			     "veryfirstboot_uuid",vxs.veryfirstboot.Blob.u;
+			     "firstboot_uuid",vxs.firstboot.Blob.u;
+			     "id_dsa_uuid",vxs.id_dsa.Blob.u;
+			     "answerfile_uuid",vxs.answerfile.Blob.u;] in
 	List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) l;
 	h
-
+      
 let cache = CamlTemplate.Cache.create ()
-
+  
 let get template host vxs =
 	let h = create_hash host vxs in
 	let tmpl = CamlTemplate.Cache.get_template cache (Printf.sprintf "templates/%s.tmpl" template) in
@@ -91,10 +88,10 @@ let get_answerfile = get "install/answerfile"
 let get_veryfirstboot = get "install/veryfirstboot"
 
 let exn_to_string = function
-        | Api_errors.Server_error(code, params) ->
-                Printf.sprintf "%s %s" code (String.concat " " params)
-        | e -> Printexc.to_string e
-
+  | Api_errors.Server_error(code, params) ->
+      Printf.sprintf "%s %s" code (String.concat " " params)
+  | e -> Printexc.to_string e
+      
 
 
 let check_pxe_dir () =

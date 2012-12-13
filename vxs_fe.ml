@@ -31,39 +31,39 @@ let consume_arg () =
 
 let test host_config rpc uuid = 
 	lwt session_id = X.Session.login_with_password rpc !username !password "1.1" in
-    lwt n = Vxs.submit_rpc host_config session_id uuid "ls /" in
-    lwt result = Vxs.get_response host_config session_id uuid n in
-    Printf.printf "%s\n%!" result;
-    Lwt.return ()
+  lwt n = Vxs.submit_rpc host_config session_id uuid "ls /" in
+  lwt result = Vxs.get_response host_config session_id uuid n in
+  Printf.printf "%s\n%!" result;
+  Lwt.return ()
 
 let main () =
 	let op = consume_arg () in
 	let host_config = Host.({host = !host; username = !username; password = !password}) in
 	let uri = Printf.sprintf "http://%s/" host_config.Host.host in
-    let rpc = X.make uri in
+  let rpc = X.make uri in
 	match op with
-		| "install" ->
+	| "install" ->
 			lwt vm_uuid = Xs_ops.create_xenserver_template host_config "trunk-ring3" in
-            Printf.printf "%s\n" vm_uuid;
-            return ()				
-        | "addrpm" ->
+      Printf.printf "%s\n" vm_uuid;
+      return ()				
+  | "addrpm" ->
 			let uuid = consume_arg () in
 			let rpm = consume_arg () in
 			lwt session_id = X.Session.login_with_password rpc !username !password "1.1" in
-            lwt () = Vxs.add_rpm host_config session_id uuid rpm in
+      lwt () = Vxs.add_rpm host_config session_id uuid rpm in
 			return ()
-		| "rpc" ->
+	| "rpc" ->
 			let uuid = consume_arg () in
 			let script = consume_arg () in 
 			lwt session_id = X.Session.login_with_password rpc !username !password "1.1" in
  			lwt n = Vxs.submit_rpc host_config session_id uuid "ls /" in
-            lwt result = Vxs.get_response host_config session_id uuid n in
-            Printf.printf "%s\n%!" result;
-            return ()
-        | _ -> 
+      lwt result = Vxs.get_response host_config session_id uuid n in
+      Printf.printf "%s\n%!" result;
+      return ()
+  | _ -> 
 			Printf.printf "Unknown operation";
 			return ()
-
+          
 (*	let uri = Printf.sprintf "http://%s/" !host in
         let rpc = make uri in
         lwt session_id = Session.login_with_password rpc !username !password "1.0" in
@@ -79,14 +79,14 @@ let main () =
 
 let _ =
 	let op = ref "install" in
-    Arg.parse [
-        "-host", Arg.Set_string host, (Printf.sprintf "Hostname of server to connect to (default %s)" !host);
-        "-u", Arg.Set_string username, (Printf.sprintf "Username to log in with (default %s)" !username);
-        "-pw", Arg.Set_string password, (Printf.sprintf "Password to log in with (default %s)" !password);
-    ] (fun x -> anon := x :: !anon)
-        "VXS toolkit";
+  Arg.parse [
+      "-host", Arg.Set_string host, (Printf.sprintf "Hostname of server to connect to (default %s)" !host);
+      "-u", Arg.Set_string username, (Printf.sprintf "Username to log in with (default %s)" !username);
+      "-pw", Arg.Set_string password, (Printf.sprintf "Password to log in with (default %s)" !password);
+  ] (fun x -> anon := x :: !anon)
+      "VXS toolkit";
 	anon := List.rev !anon;
 	
-    Lwt_main.run (main ())
+  Lwt_main.run (main ())
 
 

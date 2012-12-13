@@ -21,14 +21,15 @@ module X=Xen_api_lwt_unix
 
 
 type host_config = {
-	host : string;                (* e.g. st11.uk.xensource.com *)
-	username : string;            (* For the underlying xenserver *)
-	password : string;            
+	  host : string;                (* e.g. st11.uk.xensource.com *)
+	  username : string;            (* For the underlying xenserver *)
+	  password : string;            
 }
-
+    
 let make host username password =
 	{ host; username; password }
-
+      
 let get_rpc host =
 	let uri = Printf.sprintf "http://%s/" host.host in
-    X.make uri
+  X.make uri
+      

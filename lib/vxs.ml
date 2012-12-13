@@ -31,44 +31,44 @@ let submit_rpc host_config session_id uuid cmd =
 		rpcs
 	in
 	let rpcs = get "rpc" in
-    let max = List.fold_left (fun x (y,_) -> max x y) 0 rpcs in
+  let max = List.fold_left (fun x (y,_) -> max x y) 0 rpcs in
 	let new_rpc = max + 1 in
 	let rpcname = Printf.sprintf "rpc%d" new_rpc in
 	lwt blob = Blob.add_blob rpc session_id vm rpcname in
-    lwt () = Blob.put_blob host_config session_id blob cmd in
-    lwt () = X.VM.add_to_other_config rpc session_id vm rpcname blob.Blob.u in
-    return new_rpc
+  lwt () = Blob.put_blob host_config session_id blob cmd in
+  lwt () = X.VM.add_to_other_config rpc session_id vm rpcname blob.Blob.u in
+  return new_rpc
 
 let get_response host_config session_id uuid n =
 	let rpc = Host.get_rpc host_config in
 	lwt vm_ref = X.VM.get_by_uuid rpc session_id uuid in
 	let response = Printf.sprintf "response%d" n in
 	let rec process_events token = 
-   	    lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm_ref] ~token ~timeout:60.0 in
-
-        let ef = Event_types.event_from_of_xmlrpc events in 
-        lwt results = Lwt_list.map_s (fun ev -> 
-	        Lwt.return (match Event_helper.record_of_event ev with
+   	lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm_ref] ~token ~timeout:60.0 in
+    
+    let ef = Event_types.event_from_of_xmlrpc events in 
+    lwt results = Lwt_list.map_s (fun ev -> 
+	      Lwt.return (match Event_helper.record_of_event ev with
 		    | Event_helper.VM (_ref,Some record) -> 
-				if List.mem_assoc response record.API.vM_other_config 
-				then Some (List.assoc response record.API.vM_other_config)
-				else None
-			| _ ->
+				    if List.mem_assoc response record.API.vM_other_config 
+				    then Some (List.assoc response record.API.vM_other_config)
+				    else None
+			  | _ ->
 		        None)) ef.Event_types.events in
-        let result = List.fold_left (fun acc x ->
-			match acc,x with
+    let result = List.fold_left (fun acc x ->
+			  match acc,x with
 				| None,None -> None
 				| Some x, _ -> acc
 				| None,Some _ -> x) None results in
 		match result with
-			| None -> process_events ef.Event_types.token
-			| Some x -> return x
-    in
-    lwt result_blob = process_events "" in
-    lwt blob = Blob.of_uuid rpc session_id result_blob in
-    lwt stdout = Blob.get_blob host_config session_id blob in
-    return stdout
-
+		| None -> process_events ef.Event_types.token
+		| Some x -> return x
+  in
+  lwt result_blob = process_events "" in
+  lwt blob = Blob.of_uuid rpc session_id result_blob in
+  lwt stdout = Blob.get_blob host_config session_id blob in
+  return stdout
+      
 let add_rpm host_config session_id uuid rpm_filename =
 	let rpc = Host.get_rpc host_config in
 	let key = "rpm-blobs" in
@@ -81,4 +81,4 @@ let add_rpm host_config session_id uuid rpm_filename =
 	let new_rpms = String.concat "," (blob.Blob.u::rpms) in
 	lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
   X.VM.add_to_other_config rpc session_id vm_ref key new_rpms
-    
+      
