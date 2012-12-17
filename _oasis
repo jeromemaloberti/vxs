@@ -28,4 +28,4 @@ Executable            vxs_fe
   MainIs:             vxs_fe.ml
   Install:            false
   Custom:             true
-  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt, cmdliner
