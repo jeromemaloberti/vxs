@@ -46,7 +46,7 @@ let get_response host_config session_id uuid n =
 	let rec process_events token = 
    	lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm_ref] ~token ~timeout:60.0 in
     
-    let ef = Event_types.event_from_of_xmlrpc events in 
+    let ef = Event_types.event_from_of_rpc events in 
     lwt results = Lwt_list.map_s (fun ev -> 
 	      Lwt.return (match Event_helper.record_of_event ev with
 		    | Event_helper.VM (_ref,Some record) -> 

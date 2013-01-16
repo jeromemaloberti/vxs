@@ -123,7 +123,7 @@ let create_xenserver_template host branch =
 
     lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
     let (network,_) = List.hd nets in
-	lwt vif = X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
+	lwt vif = X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[] in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
 	let pool = List.hd pools in
 	lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
@@ -186,7 +186,7 @@ let create_xenserver_template host branch =
  
     let rec wait token =
 		lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm] ~token ~timeout:1.0 in
-	    let ef = Event_types.event_from_of_xmlrpc events in 
+	    let ef = Event_types.event_from_of_rpc events in 
 		let finished = List.exists (fun ev -> 
 			match Event_helper.record_of_event ev with
 				| Event_helper.VM (_,Some r) ->

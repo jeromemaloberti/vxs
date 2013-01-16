@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: a5d0d566b27673c251884388562d112a)
+# DO NOT EDIT (digest: 8433f334a5b3bc946911242c45fa4121)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -15,7 +15,6 @@
 "_darcs": not_hygienic
 # Library xsops
 "lib/xsops.cmxs": use_xsops
-<lib/*.ml{,i}>: pkg_lwt.syntax
 <lib/*.ml{,i}>: pkg_cohttp
 <lib/*.ml{,i}>: pkg_xen-api-client
 <lib/*.ml{,i}>: pkg_camltemplate
