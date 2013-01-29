@@ -1,0 +1,24 @@
+Name:        vxs
+Version:     0.2
+Synopsis:  Virtual XenServer Management
+Authors:     Jon Ludlam and Jerome Maloberti
+License:     LGPL-2.1 with OCaml linking exception
+obuild-ver:  1
+
+Library xsops
+  Path: lib/
+  pp: camlp4o
+  Modules: Host, Blob, Xs_ops, Vxs, Utils
+  BuildDepends: lwt.syntax, camltemplate, xmlm, cohttp, rpclib, xen-api-client
+
+Executable            vxs_script_executer
+  Path:               .
+  MainIs:             vxs_script_executer.ml
+  pp: camlp4o
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
+
+Executable            vxs_fe
+  Path:               .
+  MainIs:             vxs_fe.ml
+  pp: camlp4o
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt, cmdliner
