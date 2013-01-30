@@ -33,6 +33,40 @@ let make_rpc copts =
   let rpc = X.make uri in
   rpc
 
+(* From opam *)
+let mk_subdoc ?(names="COMMANDS") commands =
+  `S names ::
+    List.map (fun (cs,_,d) ->
+      let bold s = Printf.sprintf "$(b,%s)" s in
+    let cmds = String.concat ", " (List.map bold cs) in
+    `I (cmds, d)
+    ) commands
+    
+let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
+  let command =
+    let doc =
+      Cli.Arg.info ~docv:name ~doc:
+        (Printf.sprintf
+           "Name of the sub-command. See the $(b,%sS) section for more info.%s"
+           name
+           (match default with
+           | None   -> ""
+           | Some d -> " " ^ d))
+        [] in
+    let commands =
+      List.fold_left
+        (fun acc (cs,f,_) -> List.map (fun c -> c,f) cs @ acc)
+        [] commands in
+    Cli.Arg.(value & pos initial_pos (some & my_enum commands) None & doc) in
+  let params =
+    let doc = Cli.Arg.info ~doc:"Optional parameters." [] in
+    Cli.Arg.(value & pos_right initial_pos string [] & doc) in
+  command, params
+
+let mk_subcommands ?name commands initial_pos =
+  mk_subcommands_aux ?name Cli.Arg.enum commands None initial_pos
+    
+
 let install copts branch nofakev6d =
   let host_config = config copts in
   let branch = opt_str branch in
@@ -50,6 +84,22 @@ let install copts branch nofakev6d =
       return ()
   in
 	Lwt_main.run (aux ())
+
+let template_list copts =
+  Printf.printf "Listing the templates\n"
+
+let template_destroy copts uuid =
+  Printf.printf "Destroying the template %s\n" uuid
+
+let template copts command branch nofakev6d params =
+  match command, params with
+  | None          , []
+  | Some `list    , [] -> template_list copts 
+  | Some `destroy , [uuid] -> template_destroy copts uuid
+  | Some `install , [] -> install copts branch nofakev6d
+  | _ -> Printf.printf "Too many parameters\n";
+    ()
+
 
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
@@ -150,7 +200,19 @@ let add_rpms_cmd =
   Cli.Term.(pure add_rpms $ common_opts_t $ uuid $ rpms),
   Cli.Term.info "add-rpms" ~sdocs:common_opts_sect ~doc ~man
 
-let create_template_cmd =
+let template_cmd =
+  let doc = "Commands on Templates" in
+  let commands = [
+    ["install"], `install, "Install a Virtual Xen Server as a template on the host.\
+                            The $(b,branch) can be optionally specified and the fakev6d\
+                            will not be installed if the option $(b,--nofakev6d) is given.";
+    ["list"], `list, "List the templates on the host.";
+    ["destroy"], `destroy, "Destroy the template $(b,uuid) on the host."
+  ] in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Commands on Templates"] @ (mk_subdoc commands) @ help_secs in
+  let command, params = mk_subcommands commands 1 in
   let branch =
     let doc = "Branch to install as a template." in
     Cli.Arg.(value & opt (some string) (Some "trunk-ring3") & info ["b"; "branch"]
@@ -160,13 +222,8 @@ let create_template_cmd =
     let doc = "Do not install the fake v6d." in
     Cli.Arg.(value & flag & info ["n"; "nofakev6d"] ~doc)
   in
-  let doc = "install a Virtual Xen Server Template" in
-  let man = [
-    `S "DESCRIPTION";
-    `P "Install a Virtual Xen Server as a Template"] @ help_secs
-  in
-  Cli.Term.(pure install $ common_opts_t $ branch $ nov6d),
-  Cli.Term.info "create-template" ~sdocs:common_opts_sect ~doc ~man
+  Cli.Term.(pure template $ common_opts_t $ command $ branch $ nov6d $ params),
+  Cli.Term.info "template" ~sdocs:common_opts_sect ~doc ~man
 
 let call_rpc_cmd =
   let docs = common_opts_sect in
@@ -192,7 +249,7 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs_fe" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [create_template_cmd; add_rpms_cmd; call_rpc_cmd]
+let cmds = [template_cmd; add_rpms_cmd; call_rpc_cmd]
 
 let () = match Cli.Term.eval_choice default_cmd cmds with
   | `Error _ -> exit 1 | _ -> exit 0
