@@ -80,7 +80,7 @@ let run =
           
 				  lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm_ref] ~token ~timeout:60.0 in
 			    
-			    let ef = Event_types.event_from_of_xmlrpc events in 
+			    let ef = Event_types.event_from_of_rpc events in 
 				  lwt () = Lwt_list.iter_s (fun ev -> 
 					    match Event_helper.record_of_event ev with
 						  | Event_helper.VM (_ref,Some record) -> process_other_config host_config rpc session_id _ref record
