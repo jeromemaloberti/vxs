@@ -1,3 +1,5 @@
+\# Warning, this template should be synchronised with the linux_cmdline.tmpl template
+
 label install
     kernel mboot.c32
     append carbon/${branch}/latest/xen.gz  dom0_mem=752M com1=115200,8n1 console=com1,vga --- carbon/${branch}/latest/vmlinuz xencons=hvc console=tty0 install answerfile=http://${host}/blob?uuid=${answerfile_uuid} atexit=poweroff ---  carbon/${branch}/latest/install.img
