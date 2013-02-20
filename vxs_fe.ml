@@ -71,7 +71,7 @@ let install copts branch nofakev6d =
   let host_config = config copts in
   let branch = opt_str branch in
   let aux () =
-	  lwt vm_uuid = Xs_ops.create_xenserver_template host_config branch in
+	  lwt vm_uuid = Xs_ops.create_xenserver_template host_config (Xs_ops.Pxe branch) in
     Printf.printf "%s\n" vm_uuid;
     if not nofakev6d then begin
         let rpc = make_rpc copts in
