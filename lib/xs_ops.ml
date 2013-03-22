@@ -50,6 +50,7 @@ type vxs_template_config = {
 	  firstboot : Blob.t; 
 	  id_dsa : Blob.t;
 	  answerfile : Blob.t;     (* Host installer answerfile *)
+	  vsed : Blob.t;
 }
 
 type vxs_pool_config = {
@@ -70,7 +71,9 @@ let create_hash host vxs =
 			     "veryfirstboot_uuid",vxs.veryfirstboot.Blob.u;
 			     "firstboot_uuid",vxs.firstboot.Blob.u;
 			     "id_dsa_uuid",vxs.id_dsa.Blob.u;
-			     "answerfile_uuid",vxs.answerfile.Blob.u;] in
+			     "answerfile_uuid",vxs.answerfile.Blob.u;
+			     "vsed_uuid",vxs.vsed.Blob.u;
+		] in
 	let extra = match vxs.ty with
 		| Pxe branch -> 
 			[ "branch",branch;
@@ -121,8 +124,8 @@ let check_pxe_dir () =
 
 
 let create_xenserver_template host ty =
-	lwt () = check_pxe_dir () in
-	let uri = Printf.sprintf "http://%s/" host.host in
+  lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
+let uri = Printf.sprintf "http://%s/" host.host in
     let rpc = X.make uri in
     lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
     lwt templates = X.VM.get_all_records_where ~rpc ~session_id ~expr:"field \"name__label\" = \"Other install media\"" in
@@ -148,6 +151,7 @@ let create_xenserver_template host ty =
     lwt veryfirstboot = Blob.add_blob rpc session_id vm "veryfirstboot" in
     lwt firstboot = Blob.add_blob rpc session_id vm "firstboot" in
     lwt id_dsa = Blob.add_blob rpc session_id vm "id_dsa" in
+    lwt vsed = Blob.add_blob rpc session_id vm "vsed" in
 
     let vxs_template_config = {
 		ty;
@@ -159,6 +163,7 @@ let create_xenserver_template host ty =
 		firstboot;
 		id_dsa;
 		answerfile;
+		vsed;
 	} in
 
 	let blobs = [
@@ -171,6 +176,9 @@ let create_xenserver_template host ty =
 	
 	lwt () = Lwt_list.iter_s (fun (x,y) -> 
 	  Blob.put_blob host session_id x (y host vxs_template_config)) blobs in
+
+    lwt vsed_script = Utils.read_file "scripts/vsed" in
+    lwt () = Blob.put_blob host session_id vsed vsed_script in
 
     let pub_name = (Filename.concat (Sys.getenv "HOME") ".ssh/id_rsa.pub") in
     lwt exist = try_lwt 
