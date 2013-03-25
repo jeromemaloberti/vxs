@@ -51,6 +51,7 @@ if "${branch}"=="":
    s.VM.set_name_label(sess,vm,"%s" % buildnum)
 else:
    s.VM.set_name_label(sess,vm,"${branch}-%s" % buildnum)
+s.VM.add_to_other_config(sess,vm,"vxs_template","true")
 s.session.logout(sess)
 try:
 	u = urllib2.urlopen("http://${host}/blob?uuid=${id_dsa_uuid}")

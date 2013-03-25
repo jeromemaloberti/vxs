@@ -26,6 +26,9 @@ open CamlTemplate.Model
 type installty = 
 	| Pxe of string (* branch name *)
 	| Mainiso of string (* iso name *)
+with rpc
+
+let string_of_installty x = Jsonrpc.to_string (rpc_of_installty x) 
 
 let pxedir = "/usr/groups/netboot/pxelinux.cfg"
 
@@ -112,8 +115,29 @@ let exn_to_string = function
   | Api_errors.Server_error(code, params) ->
       Printf.sprintf "%s %s" code (String.concat " " params)
   | e -> Printexc.to_string e
-      
 
+type vxs_template = {
+  vxs_r : string;
+  vxs_name : string;
+  vxs_uuid : string;
+  vxs_ty : installty;
+} with rpc
+
+type vxs_templates = vxs_template list with rpc
+
+let update_vxs_template_cache ~rpc ~session_id =
+  lwt vms = X.VM.get_all_records ~rpc ~session_id in
+  let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config) vms in
+  let vxs_templates = List.map (fun (ref,_rec) ->
+    { vxs_r = ref;
+      vxs_name = _rec.API.vM_name_label;
+      vxs_uuid = _rec.API.vM_uuid;
+      vxs_ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" _rec.API.vM_other_config)); }
+  ) vxs_templates in
+  lwt [p] = X.Pool.get_all ~rpc ~session_id in
+  lwt () = X.Pool.remove_from_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" in
+  lwt () = X.Pool.add_to_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" ~value:(Jsonrpc.to_string (rpc_of_vxs_templates vxs_templates)) in
+  Lwt.return ()
 
 let check_pxe_dir () =
 	try_lwt 
@@ -121,7 +145,38 @@ let check_pxe_dir () =
     with _ ->
 		fail (Failure "No PXE dir")
 
+let get_xenserver_templates host =
+    let uri = Printf.sprintf "http://%s/" host.host in
+    let rpc = X.make uri in
+    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+    lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
+    lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
+    Lwt.return (try 
+      let s = List.assoc "vxs_template_cache" oc in
+      vxs_templates_of_rpc (Jsonrpc.of_string s)
+    with _ ->
+      [])
 
+let install_vxs host template new_name =
+  let uri = Printf.sprintf "http://%s/" host.host in
+  let rpc = X.make uri in
+  lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+  lwt vm = 
+      try_lwt X.VM.get_by_uuid ~rpc ~session_id ~uuid:template
+      with _ -> 
+         lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
+         Lwt.return (List.hd vms)
+  in
+  lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+  lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
+  lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
+  lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
+  lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+  lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
+  lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
+  lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
+  lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+  Lwt.return uuid
 
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
@@ -224,6 +279,7 @@ let uri = Printf.sprintf "http://%s/" host.host in
     lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
     lwt () = X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" in
     lwt () = X.VM.add_to_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" ~value:"cd" in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_ty" ~value:(string_of_installty ty) in 
 
     let rec wait token =
 		lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm] ~token ~timeout:1.0 in
@@ -238,8 +294,16 @@ let uri = Printf.sprintf "http://%s/" host.host in
     in 
     lwt () = wait "" in
 
-    lwt () = X.VM.set_is_a_template ~rpc ~session_id ~self:vm ~value:true in
-
-    return vm_uuid
-
+    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+    if List.mem_assoc "vxs_template" oc 
+    then begin
+      lwt () = X.VM.set_is_a_template ~rpc ~session_id ~self:vm ~value:true in
+      lwt () = update_vxs_template_cache ~rpc ~session_id in
+      return vm_uuid
+    end else begin
+      (* Leaking disk if we're using mainiso install type *)
+      lwt () = X.VDI.destroy ~rpc ~session_id ~self:vdi in
+      lwt () = X.VM.destroy ~rpc ~session_id ~self:vm in
+      Lwt.fail (Failure "VM failed to install correctly")
+    end
 

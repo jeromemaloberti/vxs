@@ -60,3 +60,4 @@
 <*.ml{,i}>: syntax_camlp4o, pkg_lwt.syntax
 <lib/*.ml{,i}>: syntax_camlp4o, pkg_lwt.syntax
 <**/*.ml>: annot
+<**/*.ml>: syntax_camlp4o, pkg_rpclib.syntax
