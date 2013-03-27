@@ -125,6 +125,12 @@ type vxs_template = {
 
 type vxs_templates = vxs_template list with rpc
 
+let with_rpc_and_session host f =
+    let uri = Printf.sprintf "http://%s/" host.host in
+    let rpc = X.make uri in
+    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+    Lwt.finalize (fun () -> f ~rpc ~session_id) (fun () -> X.Session.logout ~rpc ~session_id)    
+
 let update_vxs_template_cache ~rpc ~session_id =
   lwt vms = X.VM.get_all_records ~rpc ~session_id in
   let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config) vms in
@@ -146,43 +152,41 @@ let check_pxe_dir () =
 		fail (Failure "No PXE dir")
 
 let get_xenserver_templates host =
-    let uri = Printf.sprintf "http://%s/" host.host in
-    let rpc = X.make uri in
-    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+  with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
     lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
-    Lwt.return (try 
-      let s = List.assoc "vxs_template_cache" oc in
-      vxs_templates_of_rpc (Jsonrpc.of_string s)
-    with _ ->
-      [])
+    let result = 
+      try 
+	let s = List.assoc "vxs_template_cache" oc in
+	vxs_templates_of_rpc (Jsonrpc.of_string s)
+      with _ ->
+	[] 
+    in
+    Lwt.return result)
 
 let install_vxs host template new_name =
-  let uri = Printf.sprintf "http://%s/" host.host in
-  let rpc = X.make uri in
-  lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
-  lwt vm = 
-      try_lwt X.VM.get_by_uuid ~rpc ~session_id ~uuid:template
+  with_rpc_and_session host (fun ~rpc ~session_id -> 
+    lwt vm = 
+      try_lwt 
+        X.VM.get_by_uuid ~rpc ~session_id ~uuid:template
       with _ -> 
          lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
          Lwt.return (List.hd vms)
-  in
-  lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
-  lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
-  lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
-  lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
-  lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
-  lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
-  lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
-  lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
-  lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
-  Lwt.return uuid
+    in
+    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+    lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
+    lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
+    lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
+    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+    lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
+    lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
+    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+    Lwt.return uuid)
 
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
-let uri = Printf.sprintf "http://%s/" host.host in
-    let rpc = X.make uri in
-    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+  with_rpc_and_session host (fun ~rpc ~session_id -> 
     lwt templates = X.VM.get_all_records_where ~rpc ~session_id ~expr:"field \"name__label\" = \"Other install media\"" in
     let (template,_) = List.hd templates in
 	Printf.printf "Found template ref: %s\n" template;
@@ -305,5 +309,18 @@ let uri = Printf.sprintf "http://%s/" host.host in
       lwt () = X.VDI.destroy ~rpc ~session_id ~self:vdi in
       lwt () = X.VM.destroy ~rpc ~session_id ~self:vm in
       Lwt.fail (Failure "VM failed to install correctly")
-    end
+   end)
 
+
+
+(*
+let create_pool host template pool_name nhosts =
+    let uri = Printf.sprintf "http://%s/" host.host in
+    let rpc = X.make uri in
+    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
+    lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
+    lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
+    let s = List.assoc "vxs_template_cache" oc in
+    let templates = vxs_templates_of_rpc (Jsonrpc.of_string s) in
+    let t = try
+*)
