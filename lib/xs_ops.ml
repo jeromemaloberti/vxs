@@ -131,9 +131,22 @@ let with_rpc_and_session host f =
     lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
     Lwt.finalize (fun () -> f ~rpc ~session_id) (fun () -> X.Session.logout ~rpc ~session_id)    
 
+let wait rpc session_id classes pred =
+  let rec inner token =
+    lwt events = X.Event.from ~rpc ~session_id ~classes ~token ~timeout:1.0 in
+    let ef = Event_types.event_from_of_rpc events in 
+    let finished = List.exists (fun ev -> 
+      pred (Event_helper.record_of_event ev)) ef.Event_types.events 
+    in
+    if not finished 
+    then inner ef.Event_types.token
+    else return ()
+  in inner ""
+
+
 let update_vxs_template_cache ~rpc ~session_id =
   lwt vms = X.VM.get_all_records ~rpc ~session_id in
-  let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config) vms in
+  let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config && _rec.API.vM_is_a_template) vms in
   let vxs_templates = List.map (fun (ref,_rec) ->
     { vxs_r = ref;
       vxs_name = _rec.API.vM_name_label;
@@ -151,8 +164,7 @@ let check_pxe_dir () =
     with _ ->
 		fail (Failure "No PXE dir")
 
-let get_xenserver_templates host =
-  with_rpc_and_session host (fun ~rpc ~session_id ->
+let get_xenserver_templates ~rpc ~session_id =
     lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
     lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
     let result = 
@@ -162,7 +174,23 @@ let get_xenserver_templates host =
       with _ ->
 	[] 
     in
-    Lwt.return result)
+    Lwt.return result
+
+let get_xenserver_templates_main host =
+  with_rpc_and_session host get_xenserver_templates
+
+let install_from_template rpc session_id template_ref new_name =
+    let vm = template_ref in
+    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+    lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
+    lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
+    lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
+    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+    lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
+    lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
+    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+    Lwt.return (new_vm,uuid)
 
 let install_vxs host template new_name =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
@@ -173,16 +201,7 @@ let install_vxs host template new_name =
          lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
          Lwt.return (List.hd vms)
     in
-    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
-    lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
-    lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
-    lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
-    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
-    lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
-    lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
-    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
-    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
-    Lwt.return uuid)
+    install_from_template rpc session_id vm new_name)
 
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
@@ -285,18 +304,10 @@ let create_xenserver_template host ty =
     lwt () = X.VM.add_to_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" ~value:"cd" in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_ty" ~value:(string_of_installty ty) in 
 
-    let rec wait token =
-		lwt events = X.Event.from ~rpc ~session_id ~classes:[Printf.sprintf "vm/%s" vm] ~token ~timeout:1.0 in
-	    let ef = Event_types.event_from_of_rpc events in 
-		let finished = List.exists (fun ev -> 
-			match Event_helper.record_of_event ev with
-				| Event_helper.VM (_,Some r) ->
-					r.API.vM_power_state = `Halted) ef.Event_types.events in
-		if not finished then
-			wait ef.Event_types.token
-		else return ()
-    in 
-    lwt () = wait "" in
+    lwt () = wait rpc session_id [Printf.sprintf "vm/%s" vm] (function 
+    | Event_helper.VM (_,Some r) ->
+      r.API.vM_power_state = `Halted
+    | _ -> false) in
 
     lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
     if List.mem_assoc "vxs_template" oc 
@@ -312,15 +323,43 @@ let create_xenserver_template host ty =
    end)
 
 
+exception Unknown_template of string
 
-(*
+let rec l_init = function
+  | 0 -> []
+  | n -> n :: (l_init (n-1))
+
 let create_pool host template pool_name nhosts =
-    let uri = Printf.sprintf "http://%s/" host.host in
-    let rpc = X.make uri in
-    lwt session_id = X.Session.login_with_password rpc host.username host.password "1.0" in
-    lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
-    lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
-    let s = List.assoc "vxs_template_cache" oc in
-    let templates = vxs_templates_of_rpc (Jsonrpc.of_string s) in
-    let t = try
-*)
+  with_rpc_and_session host (fun ~rpc ~session_id -> 
+    let starttime = Unix.gettimeofday () in
+    lwt templates = get_xenserver_templates rpc session_id in
+    lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
+    lwt vms = Lwt_list.map_p (fun n -> 
+      lwt (vm,u) = install_from_template rpc session_id t.vxs_r (Printf.sprintf "%s%d" pool_name n) in
+      lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+      Lwt.return (vm,u))
+      (l_init nhosts) in
+    let endtime = Unix.gettimeofday () in
+    Printf.printf "%d host%s created (time taken: %f seconds)\n%!" nhosts (if nhosts>1 then "s" else "") (endtime -. starttime);
+    let master = List.hd vms in
+    let slaves = List.tl vms in
+    let wait_for_ip (vm,_) = 
+      lwt () = wait rpc session_id [Printf.sprintf "vm/%s" vm] (function
+      | Event_helper.VM (_,Some r) ->
+        List.mem_assoc "vxs_ip" r.API.vM_other_config
+      | _ -> false) in
+      lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+      let ip = List.assoc "vxs_ip" oc in
+      Lwt.return ip
+    in
+    let starttime = Unix.gettimeofday () in
+    lwt ips = Lwt_list.map_s wait_for_ip vms in
+    let endtime = Unix.gettimeofday () in
+    let master_ip = List.hd ips in
+    Printf.printf "All hosts have reported their IPs (time taken: %f seconds). Master IP=%s Joining pool\n%!" (endtime -. starttime) master_ip;
+    lwt rpcs = Lwt_list.map_s (fun (r,u) -> lwt n = Vxs.submit_rpc host session_id u (Printf.sprintf "#!/bin/bash\nxe pool-join master-address=%s master-username=root master-password=xenroot\n" master_ip) in Lwt.return (u,n)) slaves in
+    lwt responses = Lwt_list.map_s (fun (u,n) -> Vxs.get_response host session_id u n) rpcs in
+    let endtime2 = Unix.gettimeofday () in
+    Printf.printf "All done. Time for pool join: %f seconds\n%!" (endtime2 -. endtime);
+    List.iter (fun (rc,out,err) -> Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err) responses;
+    Lwt.return ())

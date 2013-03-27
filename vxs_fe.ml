@@ -88,7 +88,7 @@ let install copts branch nofakev6d =
 let template_list copts =
   let aux () =
     let host_config = config copts in
-    lwt templates = Xs_ops.get_xenserver_templates host_config in
+    lwt templates = Xs_ops.get_xenserver_templates_main host_config in
     let open Xs_ops in
     Printf.printf "%-20s | %-36s | %-30s |\n" "NAME" "UUID" "INSTALL TYPE";
     List.iter (fun t ->
