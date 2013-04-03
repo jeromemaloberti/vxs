@@ -9,13 +9,7 @@ Library xsops
   Path: lib/
   pp: camlp4o
   Modules: Host, Blob, Xs_ops, Vxs, Utils
-  BuildDepends: lwt.syntax, camltemplate, xmlm, cohttp, rpclib, xen-api-client
-
-Executable            vxs_script_executer
-  Path:               .
-  MainIs:             vxs_script_executer.ml
-  pp: camlp4o
-  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
+  BuildDepends: lwt.syntax, rpclib.syntax, camltemplate, xmlm, cohttp, rpclib, xen-api-client
 
 Executable            vxs_fe
   Path:               .

@@ -1,33 +1,19 @@
-.PHONY: all clean install build
-all: build doc
+PREFIX?=/usr/local
 
-J=4
+.DEFAULT: all
+all: dist/setup
+	obuild build
 
-export OCAMLRUNPARAM=b
-
-setup.ml: _oasis
-	oasis setup
-
-setup.bin: setup.ml
-	@ocamlopt.opt -o $@ $< || ocamlopt -o $@ $< || ocamlc -o $@ $<
-	@rm -f setup.cmx setup.cmi setup.o setup.cmo
-
-build: setup.bin
-	./setup.bin -configure --enable-tests
-	./setup.bin -build -j $(J)
-
-setup.data: setup.bin
-	@./setup.bin -configure
-
-build: setup.data setup.bin
-	@./setup.bin -build -j $(J)
-
-doc: setup.data setup.bin
-	@./setup.bin -doc -j $(J)
-
-install: setup.bin
-	@./setup.bin -install
+dist/setup:
+	obuild configure
 
 clean:
-	@ocamlbuild -clean
-	@rm -f setup.data setup.log setup.bin
+	obuild clean
+
+install: all
+	ocamlfind install xsops lib/META dist/build/lib-xsops/*.cma dist/build/lib-xsops/*.cmi dist/build/lib-xsops/*.cmxa dist/build/lib-xsops/*.a
+	cp dist/build/vxs_fe/vxs_fe $(PREFIX)/bin/
+
+uninstall:
+	ocamlfind remove xsops
+	rm $(PREFIX)/bin/vxs_fe

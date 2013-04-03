@@ -1,0 +1,9 @@
+version = "0.2"
+description = "Virtual XenServer Management"
+requires = "camltemplate xmlm cohttp rpclib xen-api-client"
+archive(byte) = "xsops.cma"
+archive(byte, plugin) = "xsops.cma"
+archive(native) = "xsops.cmxa"
+archive(native, plugin) = "xsops.cmxs"
+exists_if = "xsops.cma"
+
