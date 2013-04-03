@@ -1,11 +1,14 @@
 PREFIX?=/usr/local
 
 .DEFAULT: all
-all: dist/setup
+all: dist/setup lib/template.ml
 	obuild build
 
 dist/setup:
 	obuild configure
+
+lib/template.ml: lib/template.mlify
+	cd lib && ocamlify template.mlify --output template.ml
 
 clean:
 	obuild clean

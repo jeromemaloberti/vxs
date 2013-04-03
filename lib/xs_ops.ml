@@ -88,22 +88,33 @@ let create_hash host vxs =
 	List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) (l @ extra);
 	h
       
-let cache = CamlTemplate.Cache.create ()
-  
+class string_loader =
+object
+  method check ~(template_name : string) ~(load_time : float) =
+    CamlTemplate.Cache.TemplateUnchanged
+      
+  method load ~(template_name : string) =
+    template_name
+end
+
+let loader = new string_loader
+
+let cache = CamlTemplate.Cache.create ~loader ()
+
 let get template host vxs =
 	let h = create_hash host vxs in
-	let tmpl = CamlTemplate.Cache.get_template cache (Printf.sprintf "templates/%s.tmpl" template) in
+	let tmpl = CamlTemplate.Cache.get_template cache template in
 	let buf = Buffer.create 256 in
 	CamlTemplate.merge tmpl h buf;
 	Buffer.contents buf
 
-let get_pxe_config = get "install/pxe_config"
-let get_firstboot = get "install/firstboot"
-let get_initscript = get "install/initscript"
-let get_post_install = get "install/post_install"
-let get_answerfile = get "install/answerfile"
-let get_veryfirstboot = get "install/veryfirstboot"
-let get_linux_cmdline = get "install/linux_cmdline"
+let get_pxe_config = get Template.pxe_config_tmpl
+let get_firstboot = get Template.firstboot_tmpl
+let get_initscript = get Template.initscript_tmpl
+let get_post_install = get Template.post_install_tmpl
+let get_answerfile = get Template.answerfile_tmpl
+let get_veryfirstboot = get Template.veryfirstboot_tmpl
+let get_linux_cmdline = get Template.linux_cmdline_tmpl
 
 let meg = Int64.mul 1024L 1024L
 let gig = Int64.mul 1024L meg

@@ -1,0 +1,7 @@
+VarString initscript_tmpl "../templates/install/initscript.tmpl"
+VarString answerfile_tmpl "../templates/install/answerfile.tmpl"
+VarString firstboot_tmpl "../templates/install/firstboot.tmpl"
+VarString linux_cmdline_tmpl "../templates/install/linux_cmdline.tmpl"
+VarString post_install_tmpl "../templates/install/post_install.tmpl"
+VarString pxe_config_tmpl "../templates/install/pxe_config.tmpl"
+VarString veryfirstboot_tmpl "../templates/install/veryfirstboot.tmpl"
