@@ -64,10 +64,13 @@ let get_response host_config session_id uuid n =
 		| None -> process_events ef.Event_types.token
 		| Some x -> return x
   in
-  lwt result_blob = process_events "" in
-  lwt blob = Blob.of_uuid rpc session_id result_blob in
-  lwt stdout = Blob.get_blob host_config session_id blob in
-  return stdout
+  lwt result_rc = process_events "" in
+  lwt blobs = X.VM.get_blobs ~rpc ~session_id ~self:vm_ref in
+  lwt stdout_b = Blob.of_ref rpc session_id (List.assoc (Printf.sprintf "stdout%d" n) blobs) in
+  lwt stderr_b = Blob.of_ref rpc session_id (List.assoc (Printf.sprintf "stderr%d" n) blobs) in
+  lwt stdout = Blob.get_blob host_config session_id stdout_b in
+  lwt stderr = Blob.get_blob host_config session_id stderr_b in
+  return (int_of_string result_rc, stdout, stderr)
       
 let add_rpm host_config session_id uuid rpm_filename =
 	let rpc = Host.get_rpc host_config in

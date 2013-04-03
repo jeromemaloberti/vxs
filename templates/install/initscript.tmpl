@@ -1,5 +1,6 @@
 \#!/bin/bash
 . /etc/xensource-inventory
+ip=`ip addr show dev $MANAGEMENT_INTERFACE | grep inet | cut -d/ -f1 | awk '{print $2}'`
 ip=`xe host-param-get uuid=$INSTALLATION_UUID param-name=address`
 xe -s ${host} -u ${username} -pw ${password} vm-param-set uuid=$INSTALLATION_UUID other-config:vxs_ip=$ip
 

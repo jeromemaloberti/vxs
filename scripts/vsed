@@ -1,0 +1,243 @@
+#!/usr/bin/env python
+
+import sys, time
+import XenAPI
+import inventory
+import syslog
+import urllib2
+import subprocess
+import os
+import atexit
+from signal import SIGTERM
+
+class Daemon:
+        """
+        A generic daemon class.
+
+        Usage: subclass the Daemon class and override the run() method
+        """
+        def __init__(self, pidfile, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+                self.stdin = stdin
+                self.stdout = stdout
+                self.stderr = stderr
+                self.pidfile = pidfile
+
+        def daemonize(self):
+                """
+                do the UNIX double-fork magic, see Stevens' "Advanced
+                Programming in the UNIX Environment" for details (ISBN 0201563177)
+                http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
+                """
+                try:
+                        pid = os.fork()
+                        if pid > 0:
+                                # exit first parent
+                                sys.exit(0)
+                except OSError, e:
+                        sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+                        sys.exit(1)
+                    
+# decouple from parent environment
+                os.chdir("/")
+                os.setsid()
+                os.umask(0)
+
+                # do second fork
+                try:
+                        pid = os.fork()
+                        if pid > 0:
+                                # exit from second parent
+                                sys.exit(0)
+                except OSError, e:
+                        sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+                        sys.exit(1)
+           
+                # redirect standard file descriptors
+                sys.stdout.flush()
+                sys.stderr.flush()
+                si = file(self.stdin, 'r')
+                so = file(self.stdout, 'a+')
+                se = file(self.stderr, 'a+', 0)
+                os.dup2(si.fileno(), sys.stdin.fileno())
+                os.dup2(so.fileno(), sys.stdout.fileno())
+                os.dup2(se.fileno(), sys.stderr.fileno())
+
+                # write pidfile
+                atexit.register(self.delpid)
+                pid = str(os.getpid())
+                file(self.pidfile,'w+').write("%s\n" % pid)
+           
+        def delpid(self):
+                os.remove(self.pidfile)
+     
+        def start(self):
+                """
+                Start the daemon
+                """
+                # Check for a pidfile to see if the daemon already runs
+                try:
+                        pf = file(self.pidfile,'r')
+                        pid = int(pf.read().strip())
+                        pf.close()
+                except IOError:
+                        pid = None
+
+                if pid:
+                        message = "pidfile %s already exist. Daemon already running?\n"
+                        sys.stderr.write(message % self.pidfile)
+                        sys.exit(1)
+
+                # Start the daemon
+                self.daemonize()
+                self.run()
+
+        def stop(self):
+                """
+                Stop the daemon
+                """
+                # Get the pid from the pidfile
+                try:
+                        pf = file(self.pidfile,'r')
+                        pid = int(pf.read().strip())
+                        pf.close()
+                except IOError:
+                        pid = None
+
+                if not pid:
+                        message = "pidfile %s does not exist. Daemon not running?\n"
+                        sys.stderr.write(message % self.pidfile)
+                        return # not an error in a restart
+
+                # Try killing the daemon process       
+                try:
+                        while 1:
+                                os.kill(pid, SIGTERM)
+                                time.sleep(0.1)
+                except OSError, err:
+                        err = str(err)
+                        if err.find("No such process") > 0:
+                                if os.path.exists(self.pidfile):
+                                        os.remove(self.pidfile)
+                        else:
+                                print str(err)
+                                sys.exit(1)
+
+        def restart(self):
+                """
+                Restart the daemon
+                """
+                self.stop()
+                self.start()
+
+        def run(self):
+                """
+                You should override this method when you subclass Daemon. It will be called after the process has been
+                daemonized by start() or restart().
+                """
+
+
+def readfile(file):
+	f = open(file)
+	lines = f.readlines()
+	f.close()
+	return lines[0].rstrip()
+
+def do_exec(args, inputtext=None):
+	"""Execute a subprocess, then return its return code, stdout and stderr"""
+	proc = subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,shell=True)
+	(stdout,stderr) = proc.communicate(inputtext)
+	rc = proc.returncode
+	return (rc,stdout,stderr)
+
+class MyDaemon(Daemon):
+	def __init__(self,pidfile):
+		self.host = readfile("/etc/vxs_host")
+		self.username = readfile("/etc/vxs_username")
+		self.password = readfile("/etc/vxs_password")
+		self.hostuuid = inventory.get_localhost_uuid()
+		Daemon.__init__(self,pidfile)
+
+	def get_blob(self,sess,blob_uuid):
+		url = "http://%s/blob?session_id=%s&uuid=%s" % (self.host, sess._session, blob_uuid)
+		return urllib2.urlopen(url).read()
+
+	def get_session(self):
+		url = "http://%s/" % self.host
+		session = XenAPI.Session(url)
+		session.xenapi.login_with_password(self.username,self.password)
+		self.vm_ref = session.xenapi.VM.get_by_uuid(self.hostuuid)
+		return session
+
+	def do_rpc(self,sess,blob):
+		script = self.get_blob(sess,blob)
+		script_filename = "/tmp/%s" % blob
+		script_file = open(script_filename, "w")
+		script_file.write(script)
+		script_file.close()
+		os.chmod(script_filename,0755)
+		(rc,stdout,stderr) = do_exec(script_filename)
+		return (rc,stdout,stderr)
+
+	def put_new_blob(self,sess,name,contents):
+		blob = sess.xenapi.VM.create_new_blob(self.vm_ref,name,"",True)
+		uuid = sess.xenapi.blob.get_uuid(blob)
+		opener = urllib2.build_opener(urllib2.HTTPHandler)
+		request = urllib2.Request('http://%s/blob?session_id=%s&ref=%s' % (self.host, sess._session, blob), data=contents)
+		request.add_header('Content-Type', '')
+		request.get_method = lambda: 'PUT'
+		url = opener.open(request)
+		return uuid
+
+	def handle_event(self,sess,ev):
+		vm = ev['snapshot']
+		oc = vm['other_config']
+		print "oc: %s" % str(oc)
+		rpcs = dict((rpc[3:],v) for rpc,v in oc.items() if rpc.startswith('rpc'))
+		responses = dict((resp[8:],v) for resp,v in oc.items() if resp.startswith('response'))
+		for rpc in sorted(rpcs.keys()):
+			print "rpc: %s" % rpc
+			if rpc not in responses.keys():
+				print "wooo"
+				(rc,stdout,stderr)=self.do_rpc(sess,rpcs[rpc])
+				outuuid=self.put_new_blob(sess,"stdout%s" % rpc, stdout)
+				erruuid=self.put_new_blob(sess,"stderr%s" % rpc, stderr)
+				sess.xenapi.VM.add_to_other_config(self.vm_ref,"response%s" % rpc,"%d" % rc)
+	
+	def monitor(self,sess,tok):
+		evs = sess.event.__getattr__('from')(sess._session,["vm/%s" % self.vm_ref],tok,60.0)['Value']
+		for ev in evs['events']:
+			if ev['operation']=='mod':
+				self.handle_event(sess,ev)
+		self.monitor(sess,evs['token'])
+
+
+	def onerun(self):
+		sess=self.get_session()
+		self.monitor(sess,"")
+
+        def run(self):
+                while True:
+			try:
+				self.onerun()
+			except Exception, e:
+				syslog.syslog("vse: exception: %s" % str(e))
+				time.sleep(5)
+
+	
+if __name__ == "__main__":
+        daemon = MyDaemon('/var/run/vse.pid')
+        if len(sys.argv) == 2:
+                if 'start' == sys.argv[1]:
+                        daemon.start()
+                elif 'stop' == sys.argv[1]:
+                        daemon.stop()
+                elif 'restart' == sys.argv[1]:
+                        daemon.restart()
+                else:
+                        print "Unknown command"
+                        sys.exit(2)
+                sys.exit(0)
+        else:
+                print "usage: %s start|stop|restart" % sys.argv[0]
+                sys.exit(2)
+

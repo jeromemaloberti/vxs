@@ -86,7 +86,16 @@ let install copts branch nofakev6d =
 	Lwt_main.run (aux ())
 
 let template_list copts =
-  Printf.printf "Listing the templates\n"
+  let aux () =
+    let host_config = config copts in
+    lwt templates = Xs_ops.get_xenserver_templates_main host_config in
+    let open Xs_ops in
+    Printf.printf "%-20s | %-36s | %-30s |\n" "NAME" "UUID" "INSTALL TYPE";
+    List.iter (fun t ->
+      Printf.printf "%-20s | %-36s | %-30s |\n" t.vxs_name t.vxs_uuid (Rpc.to_string (rpc_of_installty t.vxs_ty))) templates;
+    Lwt.return ()
+  in
+  Lwt_main.run (aux ())
 
 let template_destroy copts uuid =
   Printf.printf "Destroying the template %s\n" uuid
@@ -99,7 +108,6 @@ let template copts command branch nofakev6d params =
   | Some `install , [] -> install copts branch nofakev6d
   | _ -> Printf.printf "Too many parameters\n";
     ()
-
 
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
@@ -119,11 +127,13 @@ let call_rpc copts uuid script =
   let host_config = config copts in
   let rpc = make_rpc copts in
   let aux () =
+          lwt script = Utils.read_file script in
 	  lwt session_id = X.Session.login_with_password rpc
       (opt_str copts.username_) (opt_str copts.password_) "1.1" in
- 	  lwt n = Vxs.submit_rpc host_config session_id uuid "ls /" in
-    lwt result = Vxs.get_response host_config session_id uuid n in
-    Printf.printf "%s\n%!" result;
+ 	  lwt n = Vxs.submit_rpc host_config session_id uuid script in
+    lwt (rc,out,err) = Vxs.get_response host_config session_id uuid n in
+    Printf.printf "Return code: %d\nout: %s\nerr: %s%!" rc out err;
+    exit rc;
     return ()
   in
   Lwt_main.run (aux ())
