@@ -266,8 +266,7 @@ let create_xenserver_template host ty =
 	lwt () = Lwt_list.iter_s (fun (x,y) -> 
 	  Blob.put_blob host session_id x (y host vxs_template_config)) blobs in
 
-    lwt vsed_script = Utils.read_file "scripts/vsed" in
-    lwt () = Blob.put_blob host session_id vsed vsed_script in
+    lwt () = Blob.put_blob host session_id vsed Template.vsed_string in
 
     let pub_name = (Filename.concat (Sys.getenv "HOME") ".ssh/id_rsa.pub") in
     lwt exist = try_lwt 
