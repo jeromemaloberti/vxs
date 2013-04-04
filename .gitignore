@@ -1,3 +1,5 @@
 setup.ml
 _build
 *.mustache
+dist/
+lib/template.ml
