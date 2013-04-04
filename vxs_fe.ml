@@ -29,7 +29,7 @@ let config copts =
          password = opt_str copts.password_})
 
 let make_rpc copts =
-	let uri = Printf.sprintf "http://%s/" copts.host_ in
+  let uri = Printf.sprintf "http://%s/" copts.host_ in
   let rpc = X.make uri in
   rpc
 
@@ -65,25 +65,34 @@ let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
 
 let mk_subcommands ?name commands initial_pos =
   mk_subcommands_aux ?name Cli.Arg.enum commands None initial_pos
-    
 
-let install copts branch nofakev6d =
+let template_install copts source nofakev6d =
   let host_config = config copts in
-  let branch = opt_str branch in
+  let branch = match source with 
+    | Xs_ops.Pxe branch -> branch 
+    | Xs_ops.Mainiso _ -> "trunk" in
   let aux () =
-	  lwt vm_uuid = Xs_ops.create_xenserver_template host_config (Xs_ops.Pxe branch) in
+    lwt vm_uuid = Xs_ops.create_xenserver_template host_config source in
     Printf.printf "%s\n" vm_uuid;
     if not nofakev6d then begin
-        let rpc = make_rpc copts in
-        let rpm = Printf.sprintf "/usr/groups/admin/web/www.uk.xensource.com/html/carbon/%s/latest/xe-phase-1/v6-test.rpm" branch in
-        lwt session_id = X.Session.login_with_password rpc
-          (opt_str copts.username_) (opt_str copts.password_) "1.1" in
-        lwt () = Vxs.add_rpm host_config session_id vm_uuid rpm in
-        return ()
+      let rpc = make_rpc copts in
+      let rpm = Printf.sprintf "/usr/groups/admin/web/www.uk.xensource.com/html/carbon/%s/latest/xe-phase-1/v6-test.rpm" branch in
+      lwt session_id = X.Session.login_with_password rpc
+        (opt_str copts.username_) (opt_str copts.password_) "1.1" in
+      lwt () = Vxs.add_rpm host_config session_id vm_uuid rpm in
+      return ()
     end else
       return ()
   in
-	Lwt_main.run (aux ())
+  Lwt_main.run (aux ())
+
+let template_create_cli copts branch iso nofakev6d =
+  match iso with
+  | Some file -> template_install copts (Xs_ops.Mainiso file) nofakev6d
+  | None -> 
+    match branch with 
+    | Some branch -> template_install copts (Xs_ops.Pxe branch) nofakev6d
+    | None -> template_install copts (Xs_ops.Pxe "trunk-ring3") nofakev6d
 
 let template_list copts =
   let aux () =
@@ -96,18 +105,9 @@ let template_list copts =
     Lwt.return ()
   in
   Lwt_main.run (aux ())
-
+    
 let template_destroy copts uuid =
   Printf.printf "Destroying the template %s\n" uuid
-
-let template copts command branch nofakev6d params =
-  match command, params with
-  | None          , []
-  | Some `list    , [] -> template_list copts 
-  | Some `destroy , [uuid] -> template_destroy copts uuid
-  | Some `install , [] -> install copts branch nofakev6d
-  | _ -> Printf.printf "Too many parameters\n";
-    ()
 
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
@@ -127,10 +127,10 @@ let call_rpc copts uuid script =
   let host_config = config copts in
   let rpc = make_rpc copts in
   let aux () =
-          lwt script = Utils.read_file script in
-	  lwt session_id = X.Session.login_with_password rpc
+    lwt script = Utils.read_file script in
+    lwt session_id = X.Session.login_with_password rpc
       (opt_str copts.username_) (opt_str copts.password_) "1.1" in
- 	  lwt n = Vxs.submit_rpc host_config session_id uuid script in
+    lwt n = Vxs.submit_rpc host_config session_id uuid script in
     lwt (rc,out,err) = Vxs.get_response host_config session_id uuid n in
     Printf.printf "Return code: %d\nout: %s\nerr: %s%!" rc out err;
     exit rc;
@@ -152,8 +152,8 @@ let call_rpc copts uuid script =
                 Session.logout rpc session_id*)
 
 let help common_opts man_format cmds topic = match topic with
-| None -> `Help (`Pager, None) (* help about the program. *)
-| Some topic ->
+  | None -> `Help (`Pager, None) (* help about the program. *)
+  | Some topic ->
     let topics = "topics" :: "patterns" :: "environment" :: cmds in
     let conv, _ = Cli.Arg.enum (List.rev_map (fun s -> (s, s)) topics) in
     match conv topic with
@@ -161,8 +161,8 @@ let help common_opts man_format cmds topic = match topic with
     | `Ok t when t = "topics" -> List.iter print_endline topics; `Ok ()
     | `Ok t when List.mem t cmds -> `Help (man_format, Some t)
     | `Ok t ->
-        let page = (topic, 7, "", "", ""), [`S topic; `P "Say something";] in
-        `Ok (Cli.Manpage.print man_format Format.std_formatter page)
+      let page = (topic, 7, "", "", ""), [`S topic; `P "Say something";] in
+      `Ok (Cli.Manpage.print man_format Format.std_formatter page)
 
 let common_opts_sect = "COMMON OPTIONS"
 let help_secs = [
@@ -210,31 +210,29 @@ let add_rpms_cmd =
   Cli.Term.(pure add_rpms $ common_opts_t $ uuid $ rpms),
   Cli.Term.info "add-rpms" ~sdocs:common_opts_sect ~doc ~man
 
-let template_cmd =
-  let doc = "Commands on Templates" in
-  let commands = [
-    ["install"], `install, "Install a Virtual Xen Server as a template on the host.\
-                            The $(b,branch) can be optionally specified and the fakev6d\
-                            will not be installed if the option $(b,--nofakev6d) is given.";
-    ["list"], `list, "List the templates on the host.";
-    ["destroy"], `destroy, "Destroy the template $(b,uuid) on the host."
-  ] in
-  let man = [
-    `S "DESCRIPTION";
-    `P "Commands on Templates"] @ (mk_subdoc commands) @ help_secs in
-  let command, params = mk_subcommands commands 1 in
+let template_create_cmd =
   let branch =
     let doc = "Branch to install as a template." in
-    Cli.Arg.(value & opt (some string) (Some "trunk-ring3") & info ["b"; "branch"]
-                 ~docv:"BRANCH" ~doc)
+    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
+               ~docv:"BRANCH" ~doc)
+  in
+  let iso =
+    let doc = "Iso file to install as a template." in
+    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
+               ~docv:"BRANCH" ~doc)
   in
   let nov6d =
     let doc = "Do not install the fake v6d." in
     Cli.Arg.(value & flag & info ["n"; "nofakev6d"] ~doc)
   in
-  Cli.Term.(pure template $ common_opts_t $ command $ branch $ nov6d $ params),
-  Cli.Term.info "template" ~sdocs:common_opts_sect ~doc ~man
-
+  let doc = "Create a Virtual Xen Server Template" in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Install a Virtual Xen Server as a Template"] @ help_secs
+  in
+  Cli.Term.(pure template_create_cli $ common_opts_t $ branch $ iso $ nov6d),
+  Cli.Term.info "template-create" ~sdocs:common_opts_sect ~doc ~man
+    
 let call_rpc_cmd =
   let docs = common_opts_sect in
   let uuid =
@@ -259,7 +257,7 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs_fe" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [template_cmd; add_rpms_cmd; call_rpc_cmd]
+let cmds = [template_create_cmd; add_rpms_cmd; call_rpc_cmd]
 
 let () = match Cli.Term.eval_choice default_cmd cmds with
   | `Error _ -> exit 1 | _ -> exit 0
