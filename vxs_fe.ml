@@ -94,18 +94,33 @@ let template_create_cli copts branch iso nofakev6d =
     | Some branch -> template_install copts (Xs_ops.Pxe branch) nofakev6d
     | None -> template_install copts (Xs_ops.Pxe "trunk-ring3") nofakev6d
 
-let template_list copts =
+let template_list copts branch iso latest minimal =
   let aux () =
     let host_config = config copts in
     lwt templates = Xs_ops.get_xenserver_templates_main host_config in
     let open Xs_ops in
-    Printf.printf "%-20s | %-36s | %-30s |\n" "NAME" "UUID" "INSTALL TYPE";
+    let templates = if latest && (List.length templates) > 0 then
+	let sorted = List.fast_sort (fun t1 t2 -> - (String.compare t1.vxs_install_time t2.vxs_install_time)) templates in
+	[(List.hd sorted)]
+      else List.filter (fun t -> 
+	(match branch with 
+	| Some b -> (match t.vxs_ty with Pxe b' -> b = b' | _ -> false)
+	| None -> true) &&
+	  (match iso with 
+	  | Some i -> (match t.vxs_ty with Mainiso i' -> i = i' | _ -> false)
+	  | None -> true))
+	templates in
+    if not minimal then
+      Printf.printf "%-20s | %-36s | %-20s | %-30s |\n" "NAME" "UUID" "INSTALL TIME" "INSTALL TYPE";
     List.iter (fun t ->
-      Printf.printf "%-20s | %-36s | %-30s |\n" t.vxs_name t.vxs_uuid (Rpc.to_string (rpc_of_installty t.vxs_ty))) templates;
+      if minimal then
+	Printf.printf "%s\n" t.vxs_uuid
+      else 
+	Printf.printf "%-20s | %-36s | %-20s | %-30s |\n" t.vxs_name t.vxs_uuid t.vxs_install_time (Rpc.to_string (rpc_of_installty t.vxs_ty))) templates;
     Lwt.return ()
   in
   Lwt_main.run (aux ())
-    
+
 let template_destroy copts uuid =
   Printf.printf "Destroying the template %s\n" uuid
 
@@ -208,7 +223,7 @@ let add_rpms_cmd =
     `P "Copy and install RPM files in a VM."] @ help_secs
   in
   Cli.Term.(pure add_rpms $ common_opts_t $ uuid $ rpms),
-  Cli.Term.info "add-rpms" ~sdocs:common_opts_sect ~doc ~man
+  Cli.Term.info "template-add-rpm" ~sdocs:common_opts_sect ~doc ~man
 
 let template_create_cmd =
   let branch =
@@ -232,6 +247,33 @@ let template_create_cmd =
   in
   Cli.Term.(pure template_create_cli $ common_opts_t $ branch $ iso $ nov6d),
   Cli.Term.info "template-create" ~sdocs:common_opts_sect ~doc ~man
+    
+let template_list_cmd =
+  let branch =
+    let doc = "List only the templates for this branch." in
+    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
+               ~docv:"BRANCH" ~doc)
+  in
+  let iso =
+    let doc = "List only the templates for this iso." in
+    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
+               ~docv:"BRANCH" ~doc)
+  in
+  let latest =
+    let doc = "List only the most recent templates." in
+    Cli.Arg.(value & flag & info ["l"; "latest"] ~doc)
+  in
+  let minimal =
+    let doc = "Print only the UUIDs of the templates." in
+    Cli.Arg.(value & flag & info ["m"; "minimal"] ~doc)
+  in
+  let doc = "List the Virtual Xen Server templates " in
+  let man = [
+    `S "DESCRIPTION";
+    `P "List the Virtual Xen Server templates"] @ help_secs
+  in
+  Cli.Term.(pure template_list $ common_opts_t $ branch $ iso $ latest $ minimal),
+  Cli.Term.info "template-list" ~sdocs:common_opts_sect ~doc ~man
     
 let call_rpc_cmd =
   let docs = common_opts_sect in
@@ -257,7 +299,7 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs_fe" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [template_create_cmd; add_rpms_cmd; call_rpc_cmd]
+let cmds = [template_create_cmd; template_list_cmd; add_rpms_cmd; call_rpc_cmd]
 
 let () = match Cli.Term.eval_choice default_cmd cmds with
   | `Error _ -> exit 1 | _ -> exit 0

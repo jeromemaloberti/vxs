@@ -131,6 +131,7 @@ type vxs_template = {
   vxs_r : string;
   vxs_name : string;
   vxs_uuid : string;
+  vxs_install_time : string;
   vxs_ty : installty;
 } with rpc
 
@@ -162,7 +163,9 @@ let update_vxs_template_cache ~rpc ~session_id =
     { vxs_r = ref;
       vxs_name = _rec.API.vM_name_label;
       vxs_uuid = _rec.API.vM_uuid;
-      vxs_ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" _rec.API.vM_other_config)); }
+      vxs_ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" _rec.API.vM_other_config));
+      vxs_install_time = List.assoc "vxs_install_time" _rec.API.vM_other_config;
+    }
   ) vxs_templates in
   lwt [p] = X.Pool.get_all ~rpc ~session_id in
   lwt () = X.Pool.remove_from_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" in
@@ -219,18 +222,20 @@ let create_xenserver_template host ty =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     lwt templates = X.VM.get_all_records_where ~rpc ~session_id ~expr:"field \"name__label\" = \"Other install media\"" in
     let (template,_) = List.hd templates in
-	Printf.printf "Found template ref: %s\n" template;
-	lwt vm = X.VM.clone ~rpc ~session_id ~vm:template ~new_name:"xenserver-unknown" in
+    Printf.printf "Found template ref: %s\n" template;
+    lwt vm = X.VM.clone ~rpc ~session_id ~vm:template ~new_name:"xenserver-unknown" in
     lwt vm_uuid = X.VM.get_uuid ~rpc ~session_id ~self:vm in
     lwt () = X.VM.provision ~rpc ~session_id ~vm in
     lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:g2 ~static_max:g2 ~dynamic_min:g2 ~dynamic_max:g2 in
-
+    
     lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
     let (network,_) = List.hd nets in
-	lwt vif = X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[] in
+    lwt vif = X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[] in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
-	let pool = List.hd pools in
-	lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
+    let pool = List.hd pools in
+    lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
+    lwt servertime = X.Host.get_servertime ~rpc ~session_id ~host:master in
+    lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
     lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Root disk" ~name_description:"" ~virtual_size:g40 ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
     lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
     ignore(vbd);
@@ -243,82 +248,83 @@ let create_xenserver_template host ty =
     lwt vsed = Blob.add_blob rpc session_id vm "vsed" in
 
     let vxs_template_config = {
-		ty;
-		vm_uuid;
-        vxs_root_password = host.password;
-		post_install;
-		initscript;
-		veryfirstboot;
-		firstboot;
-		id_dsa;
-		answerfile;
-		vsed;
-	} in
+      ty;
+      vm_uuid;
+      vxs_root_password = host.password;
+      post_install;
+      initscript;
+      veryfirstboot;
+      firstboot;
+      id_dsa;
+      answerfile;
+      vsed;
+    } in
 
-	let blobs = [
-		answerfile, get_answerfile;
-		post_install, get_post_install;
-		initscript, get_initscript;
-		veryfirstboot, get_veryfirstboot;
-		firstboot, get_firstboot;
-	] in
-	
-	lwt () = Lwt_list.iter_s (fun (x,y) -> 
-	  Blob.put_blob host session_id x (y host vxs_template_config)) blobs in
-
+    let blobs = [
+      answerfile, get_answerfile;
+      post_install, get_post_install;
+      initscript, get_initscript;
+      veryfirstboot, get_veryfirstboot;
+      firstboot, get_firstboot;
+    ] in
+    
+    lwt () = Lwt_list.iter_s (fun (x,y) -> 
+      Blob.put_blob host session_id x (y host vxs_template_config)) blobs in
+    
     lwt () = Blob.put_blob host session_id vsed Template.vsed_string in
-
+    
     let pub_name = (Filename.concat (Sys.getenv "HOME") ".ssh/id_rsa.pub") in
     lwt exist = try_lwt 
-      lwt _ = Lwt_unix.stat pub_name in
-      Lwt.return true
+		  lwt _ = Lwt_unix.stat pub_name in
+		  Lwt.return true
       with _ -> Lwt.return false  in 
     lwt () = if exist then begin
       lwt id_dsa_string = Utils.read_file pub_name  in
       Blob.put_blob host session_id id_dsa id_dsa_string
     end else Lwt.return () in   
-
+    
     let linux_cmdline = get_linux_cmdline host vxs_template_config in
-
+    
     let pxe_path = Printf.sprintf "%s/%s" pxedir vm_uuid in
-	let pxe_config = get_pxe_config host vxs_template_config in
-
-	lwt () = begin match vxs_template_config.ty with
-		| Pxe branch ->
-			lwt fd = Lwt_unix.openfile pxe_path [Lwt_unix.O_WRONLY; Lwt_unix.O_CREAT] 0o666 in
-            let c = Lwt_io.(of_fd output fd) in
+    let pxe_config = get_pxe_config host vxs_template_config in
+    
+    lwt () = begin match vxs_template_config.ty with
+      | Pxe branch ->
+	lwt fd = Lwt_unix.openfile pxe_path [Lwt_unix.O_WRONLY; Lwt_unix.O_CREAT] 0o666 in
+        let c = Lwt_io.(of_fd output fd) in
 	
-			lwt () = Lwt_io.write c pxe_config in
-            lwt () = Lwt_io.close c in
-
-            lwt () = X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" in
-            lwt () = X.VM.add_to_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" ~value:"ncd" in
-
-            Lwt.return () 
-        | Mainiso isoname ->
-			lwt isos = X.VDI.get_by_name_label ~rpc ~session_id ~label:isoname in
-            let iso = List.hd isos in
-            lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:iso ~vM:vm ~userdevice:"3" ~bootable:true ~mode:`RO ~_type:`CD ~unpluggable:true ~empty:false ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
-            lwt vdi2 = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Autoinstall disk" ~name_description:"" ~virtual_size:m4 ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in
-            lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi2 ~vM:vm ~userdevice:"1" ~bootable:false ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
-            let fname = "/tmp/autoinstalldisk" in
-            lwt () = Utils.create_vfat_disk fname "autoinstall" in
-            lwt () = Utils.copy_to_vfat fname "cmdline" linux_cmdline in
-            lwt contents = Utils.read_file fname  in
-            lwt () = Utils.put_disk host session_id vdi2 contents in
-            Lwt.return ()
+	lwt () = Lwt_io.write c pxe_config in
+        lwt () = Lwt_io.close c in
+	
+        lwt () = X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" in
+        lwt () = X.VM.add_to_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" ~value:"ncd" in
+	
+        Lwt.return () 
+      | Mainiso isoname ->
+	lwt isos = X.VDI.get_by_name_label ~rpc ~session_id ~label:isoname in
+        let iso = List.hd isos in
+        lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:iso ~vM:vm ~userdevice:"3" ~bootable:true ~mode:`RO ~_type:`CD ~unpluggable:true ~empty:false ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
+        lwt vdi2 = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Autoinstall disk" ~name_description:"" ~virtual_size:m4 ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in
+        lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi2 ~vM:vm ~userdevice:"1" ~bootable:false ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
+        let fname = "/tmp/autoinstalldisk" in
+        lwt () = Utils.create_vfat_disk fname "autoinstall" in
+        lwt () = Utils.copy_to_vfat fname "cmdline" linux_cmdline in
+        lwt contents = Utils.read_file fname  in
+        lwt () = Utils.put_disk host session_id vdi2 contents in
+        Lwt.return ()
     end in
-
+    
     lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
     lwt () = X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" in
     lwt () = X.VM.add_to_HVM_boot_params ~rpc ~session_id ~self:vm ~key:"order" ~value:"cd" in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_install_time" ~value:servertime in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_ty" ~value:(string_of_installty ty) in 
-
+    
     lwt () = wait rpc session_id [Printf.sprintf "vm/%s" vm] (function 
-    | Event_helper.VM (_,Some r) ->
-      r.API.vM_power_state = `Halted
-    | _ -> false) in
-
+      | Event_helper.VM (_,Some r) ->
+	r.API.vM_power_state = `Halted
+      | _ -> false) in
+    
     lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
     if List.mem_assoc "vxs_template" oc 
     then begin
@@ -330,9 +336,9 @@ let create_xenserver_template host ty =
       lwt () = X.VDI.destroy ~rpc ~session_id ~self:vdi in
       lwt () = X.VM.destroy ~rpc ~session_id ~self:vm in
       Lwt.fail (Failure "VM failed to install correctly")
-   end)
-
-
+    end)
+    
+    
 exception Unknown_template of string
 
 let rec l_init = function
