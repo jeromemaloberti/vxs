@@ -66,6 +66,52 @@ let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
 let mk_subcommands ?name commands initial_pos =
   mk_subcommands_aux ?name Cli.Arg.enum commands None initial_pos
 
+let get_all_templates copts branch iso name =
+  let aux () =
+    let host_config = config copts in
+    lwt templates = Xs_ops.get_xenserver_templates_main host_config in
+    let open Xs_ops in
+    return (List.filter (fun t -> 
+      (match name with
+      | Some n -> t.vxs_name = n
+      | None -> true) &&
+	(match branch with 
+	| Some b -> (match t.vxs_ty with Pxe b' -> b = b' | _ -> false)
+	| None -> true) &&
+	(match iso with 
+	| Some i -> (match t.vxs_ty with Mainiso i' -> i = i' | _ -> false)
+	| None -> true))
+	      templates)
+  in
+  Lwt_main.run (aux ())
+ 
+let get_template_uuid copts branch iso name =
+  let templates = get_all_templates copts branch iso name in
+  if (List.length templates) <> 1 then
+    begin 
+      Printf.printf "There are more than one or zero template matching your request.-\n";
+      exit 1
+    end;
+  let ret = (List.hd templates).Xs_ops.vxs_uuid in
+  Printf.printf "Template uuid:%s\n" ret;
+  ret
+      
+let pool_create copts nhosts nfs branch iso template_name uuid pool_name rpms =
+  Printf.printf "pool_create nhost %d nfs %s branch %s iso %s template %s uuid %s pool %s\n"
+    nhosts (opt_str nfs) (opt_str branch) (opt_str iso) (opt_str template_name) (opt_str uuid) 
+    pool_name;
+  let rpms = List.fold_left (fun acc r -> match r with Some rpm -> rpm :: acc | None -> acc) [] rpms in
+  Printf.printf "add-rpms %s\n" (String.concat ", " rpms);
+  let template_uuid = match uuid with
+    | Some uuid -> uuid
+    | None -> get_template_uuid copts branch iso template_name in
+  let host = config copts in
+  let aux () =
+    lwt () = Xs_ops.create_pool host template_uuid pool_name nhosts in 
+    return ()
+  in
+  Lwt_main.run (aux ())
+
 let template_install copts source nofakev6d =
   let host_config = config copts in
   let branch = match source with 
@@ -225,6 +271,52 @@ let add_rpms_cmd =
   Cli.Term.(pure add_rpms $ common_opts_t $ uuid $ rpms),
   Cli.Term.info "template-add-rpm" ~sdocs:common_opts_sect ~doc ~man
 
+let pool_install_cmd =
+  let docs = common_opts_sect in
+  let n_hosts =
+    let doc = "Number of hosts in the pool." in
+    Cli.Arg.(value & opt int 1 & info ["s"] ~docs ~doc ~docv:"S")
+  in
+  let nfs =
+    let doc = "NFS SR." in
+    Cli.Arg.(value & opt (some string) None & info ["N"; "nfs-sr"] ~docs ~doc ~docv:"NFS")
+  in
+  let branch =
+    let doc = "Branch for the template specifier." in
+    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
+               ~docv:"BRANCH" ~doc)
+  in
+  let iso =
+    let doc = "Iso for the template specifier." in
+    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
+               ~docv:"ISO" ~doc)
+  in
+  let template_name =
+    let doc = "Name of the template." in
+    Cli.Arg.(value & opt (some string) None & info ["n"]
+               ~docv:"TEMPLATE_NAME" ~doc)
+  in
+  let uuid =
+    let doc = "UUID of the template." in
+    Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~docs ~doc ~docv:"UUID")
+  in
+  let pool_name =
+    let doc = "Pool name." in
+    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"POOL_NAME")
+  in
+  let rpms =
+    let doc = "RPMs to copy to the pool." in
+    Cli.Arg.(value & opt_all (some string) [] & info ["r"] ~docs ~doc ~docv:"RPM")
+  in
+  let doc = "Install a pool." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Install a virtual pool on a host."] @ help_secs
+  in
+  Cli.Term.(pure pool_create $ common_opts_t $ n_hosts $ nfs $ branch $ iso $ template_name $
+  uuid $ pool_name $ rpms),
+  Cli.Term.info "install" ~sdocs:common_opts_sect ~doc ~man
+
 let template_create_cmd =
   let branch =
     let doc = "Branch to install as a template." in
@@ -234,7 +326,7 @@ let template_create_cmd =
   let iso =
     let doc = "Iso file to install as a template." in
     Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
-               ~docv:"BRANCH" ~doc)
+               ~docv:"ISO" ~doc)
   in
   let nov6d =
     let doc = "Do not install the fake v6d." in
@@ -299,7 +391,11 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs_fe" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [template_create_cmd; template_list_cmd; add_rpms_cmd; call_rpc_cmd]
+let cmds = [pool_install_cmd; template_create_cmd; template_list_cmd; add_rpms_cmd; call_rpc_cmd]
 
-let () = match Cli.Term.eval_choice default_cmd cmds with
-  | `Error _ -> exit 1 | _ -> exit 0
+let () = 
+  Printexc.record_backtrace true;
+  try
+    match Cli.Term.eval_choice default_cmd cmds with
+    | `Error _ -> exit 1 | _ -> exit 0
+  with e -> Printf.printf "Error: exception %s\n" (Printexc.to_string e)
