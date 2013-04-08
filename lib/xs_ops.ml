@@ -324,7 +324,8 @@ let template_clone host template_uuid new_name =
     lwt () = is_vxs_template rpc session_id vm in
     lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
     lwt () = update_vxs_template_cache ~rpc ~session_id in
-    Lwt.return ())
+    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+    Lwt.return (new_vm,uuid))
   
 let install_from_template rpc session_id template_ref new_name =
   let vm = template_ref in
@@ -475,7 +476,7 @@ let rec l_init = function
   | 0 -> []
   | n -> n :: (l_init (n-1))
 
-let create_pool host template pool_name nhosts =
+let create_pool host template pool_name nhosts nfs_server nfs_path =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     let starttime = Unix.gettimeofday () in
     lwt templates = get_xenserver_templates rpc session_id in
@@ -502,6 +503,15 @@ let create_pool host template pool_name nhosts =
     lwt ips = Lwt_list.map_s wait_for_ip vms in
     let endtime = Unix.gettimeofday () in
     let master_ip = List.hd ips in
+    let master_uuid = snd master in
+    lwt () = match nfs_server,nfs_path with
+      | Some s,Some p -> 
+	lwt n = submit_rpc host session_id master_uuid 
+	  (Printf.sprintf "#!/bin/bash\nxe sr-create type=nfs device-config:server=%s device-config:serverpath=%s shared=true name-label=nfs\n" s p) in
+	lwt response = get_response host session_id master_uuid n in
+	Printf.printf "NFS server setup on master\n";
+	Lwt.return ()
+      | _,_ -> Lwt.return () in
     Printf.printf "All hosts have reported their IPs (time taken: %f seconds). Master IP=%s Joining pool\n%!" (endtime -. starttime) master_ip;
     lwt rpcs = Lwt_list.map_s (fun (r,u) -> lwt n = submit_rpc host session_id u (Printf.sprintf "#!/bin/bash\nxe pool-join master-address=%s master-username=root master-password=xenroot\n" master_ip) in Lwt.return (u,n)) slaves in
     lwt responses = Lwt_list.map_s (fun (u,n) -> get_response host session_id u n) rpcs in

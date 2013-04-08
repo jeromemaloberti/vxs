@@ -101,17 +101,28 @@ let get_template_uuid copts branch iso name uuid =
     Printf.printf "Template uuid:%s\n" ret;
     ret
       
-let pool_create copts nhosts nfs branch iso template_name uuid pool_name rpms =
-  Printf.printf "pool_create nhost %d nfs %s branch %s iso %s template %s uuid %s pool %s\n"
-    nhosts (opt_str nfs) (opt_str branch) (opt_str iso) (opt_str template_name) (opt_str uuid) 
+let pool_create copts nhosts nfs_server nfs_path branch iso template_name uuid pool_name rpms =
+  Printf.printf "pool_create nhost %d nfs_server %s nfs_path %s branch %s iso %s template %s uuid %s pool %s\n"
+    nhosts (opt_str nfs_server) (opt_str nfs_path) (opt_str branch) (opt_str iso) (opt_str template_name) (opt_str uuid) 
     pool_name;
   let rpms = List.fold_left (fun acc r -> match r with Some rpm -> rpm :: acc | None -> acc) [] rpms in
   Printf.printf "add-rpms %s\n" (String.concat ", " rpms);
   let template_uuid = get_template_uuid copts branch iso template_name uuid in
   let host = config copts in
   let aux () =
-    lwt () = Xs_ops.create_pool host template_uuid pool_name nhosts in 
-    return ()
+    lwt () = if (List.length rpms) > 0 then begin
+      lwt (_,uuid) = Xs_ops.template_clone host template_uuid (template_uuid ^ "_temp") in
+      Printf.printf "created temporary template %s\n" uuid;
+      lwt () = Xs_ops.add_rpms host uuid rpms in
+      lwt () = Xs_ops.create_pool host uuid pool_name nhosts nfs_server nfs_path in 
+      lwt () = Xs_ops.template_destroy host uuid in
+      Printf.printf "destroyed temporary template %s\n" uuid;
+      Lwt.return ()
+    end else 
+	lwt () = Xs_ops.create_pool host template_uuid pool_name nhosts nfs_server nfs_path in 
+	Lwt.return ()
+    in
+    Lwt.return ()
   in
   Lwt_main.run (aux ())
 
@@ -130,7 +141,8 @@ let template_clone copts branch iso template_name uuid new_name =
   let template_uuid = get_template_uuid copts branch iso template_name uuid in
   let host = config copts in
   let aux () =
-    lwt () = Xs_ops.template_clone host template_uuid new_name in 
+    lwt (_,uuid) = Xs_ops.template_clone host template_uuid new_name in 
+    Printf.printf "template-clone %s\n" uuid;
     return ()
   in
   Lwt_main.run (aux ())
@@ -310,11 +322,15 @@ let pool_install_cmd =
   let docs = common_opts_sect in
   let n_hosts =
     let doc = "Number of hosts in the pool." in
-    Cli.Arg.(value & opt int 1 & info ["s"] ~docs ~doc ~docv:"S")
+    Cli.Arg.(value & opt int 1 & info ["s"] ~docs ~doc ~docv:"NHOSTS")
   in
-  let nfs =
-    let doc = "NFS SR." in
-    Cli.Arg.(value & opt (some string) None & info ["N"; "nfs-sr"] ~docs ~doc ~docv:"NFS")
+  let nfs_server =
+    let doc = "NFS Server address." in
+    Cli.Arg.(value & opt (some string) None & info ["N"; "nfs-server"] ~docs ~doc ~docv:"NFS_SERVER")
+  in
+  let nfs_path =
+    let doc = "NFS path." in
+    Cli.Arg.(value & opt (some string) None & info ["P"; "nfs-path"] ~docs ~doc ~docv:"NFS_PATH")
   in
   let branch = branch_opt () in
   let iso = iso_opt () in
@@ -333,8 +349,8 @@ let pool_install_cmd =
     `S "DESCRIPTION";
     `P "Install a virtual pool on a host."] @ help_secs
   in
-  Cli.Term.(pure pool_create $ common_opts_t $ n_hosts $ nfs $ branch $ iso $ template_name $
-  uuid $ pool_name $ rpms),
+  Cli.Term.(pure pool_create $ common_opts_t $ n_hosts $ nfs_server $ nfs_path $ branch $ iso $ 
+	      template_name $ uuid $ pool_name $ rpms),
   Cli.Term.info "install" ~sdocs:common_opts_sect ~doc ~man
 
 let template_destroy_cmd =
