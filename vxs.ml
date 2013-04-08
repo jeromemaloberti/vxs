@@ -262,6 +262,25 @@ let common_opts_t =
   in
   Cli.Term.(pure common_opts $ host $ user $ pw)
 
+let branch_opt () =
+  let doc = "Branch for the template specifier." in
+  Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
+             ~docv:"BRANCH" ~doc)
+
+let iso_opt () =
+  let doc = "Iso for the template specifier." in
+  Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
+             ~docv:"ISO" ~doc)
+  
+let template_name_opt () =
+  let doc = "Name of the template." in
+  Cli.Arg.(value & opt (some string) None & info ["n"]
+             ~docv:"TEMPLATE_NAME" ~doc)
+
+let uuid_opt () =
+  let doc = "UUID of the template." in
+  Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~doc ~docv:"UUID")
+
 (* Commands *)
 let add_rpms_cmd =
   let docs = common_opts_sect in
@@ -291,25 +310,10 @@ let pool_install_cmd =
     let doc = "NFS SR." in
     Cli.Arg.(value & opt (some string) None & info ["N"; "nfs-sr"] ~docs ~doc ~docv:"NFS")
   in
-  let branch =
-    let doc = "Branch for the template specifier." in
-    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
-               ~docv:"BRANCH" ~doc)
-  in
-  let iso =
-    let doc = "Iso for the template specifier." in
-    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
-               ~docv:"ISO" ~doc)
-  in
-  let template_name =
-    let doc = "Name of the template." in
-    Cli.Arg.(value & opt (some string) None & info ["n"]
-               ~docv:"TEMPLATE_NAME" ~doc)
-  in
-  let uuid =
-    let doc = "UUID of the template." in
-    Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~docs ~doc ~docv:"UUID")
-  in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
+  let template_name = template_name_opt () in
+  let uuid = uuid_opt () in
   let pool_name =
     let doc = "Pool name." in
     Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"POOL_NAME")
@@ -329,25 +333,10 @@ let pool_install_cmd =
 
 let template_destroy_cmd =
   let docs = common_opts_sect in
-  let branch =
-    let doc = "Branch for the template specifier." in
-    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
-               ~docv:"BRANCH" ~doc)
-  in
-  let iso =
-    let doc = "Iso for the template specifier." in
-    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
-               ~docv:"ISO" ~doc)
-  in
-  let template_name =
-    let doc = "Name of the template." in
-    Cli.Arg.(value & opt (some string) None & info ["n"]
-               ~docv:"TEMPLATE_NAME" ~doc)
-  in
-  let uuid =
-    let doc = "UUID of the template." in
-    Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~docs ~doc ~docv:"UUID")
-  in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
+  let template_name = template_name_opt () in
+  let uuid = uuid_opt () in
   let doc = "Destroy a template." in
   let man = [
     `S "DESCRIPTION";
@@ -357,16 +346,8 @@ let template_destroy_cmd =
   Cli.Term.info "template-destroy" ~sdocs:common_opts_sect ~doc ~man
 
 let template_create_cmd =
-  let branch =
-    let doc = "Branch to install as a template." in
-    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
-               ~docv:"BRANCH" ~doc)
-  in
-  let iso =
-    let doc = "Iso file to install as a template." in
-    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
-               ~docv:"ISO" ~doc)
-  in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
   let nov6d =
     let doc = "Do not install the fake v6d." in
     Cli.Arg.(value & flag & info ["n"; "nofakev6d"] ~doc)
@@ -380,16 +361,8 @@ let template_create_cmd =
   Cli.Term.info "template-create" ~sdocs:common_opts_sect ~doc ~man
     
 let template_list_cmd =
-  let branch =
-    let doc = "List only the templates for this branch." in
-    Cli.Arg.(value & opt (some string) None & info ["b"; "branch"]
-               ~docv:"BRANCH" ~doc)
-  in
-  let iso =
-    let doc = "List only the templates for this iso." in
-    Cli.Arg.(value & opt (some string) None & info ["i"; "iso"]
-               ~docv:"BRANCH" ~doc)
-  in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
   let latest =
     let doc = "List only the most recent templates." in
     Cli.Arg.(value & flag & info ["l"; "latest"] ~doc)
