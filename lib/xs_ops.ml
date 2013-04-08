@@ -24,8 +24,10 @@ open Host
 open CamlTemplate.Model
 
 type installty = 
-	| Pxe of string (* branch name *)
-	| Mainiso of string (* iso name *)
+| Pxe of string (* branch name *)
+| Mainiso of string (* iso name *)
+| Custom (* once a VXS template has been changed *)
+	    
 with rpc
 
 let string_of_installty x = Jsonrpc.to_string (rpc_of_installty x) 
@@ -114,7 +116,7 @@ let get_response host_config session_id uuid n =
   lwt stdout = Blob.get_blob host_config session_id stdout_b in
   lwt stderr = Blob.get_blob host_config session_id stderr_b in
   return (int_of_string result_rc, stdout, stderr)
-    
+  
 let add_rpm host_config session_id uuid rpm_filename =
   let rpc = Host.get_rpc host_config in
   let key = "rpm-blobs" in
@@ -127,7 +129,6 @@ let add_rpm host_config session_id uuid rpm_filename =
   let new_rpms = String.concat "," (blob.Blob.u::rpms) in
   lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
   X.VM.add_to_other_config rpc session_id vm_ref key new_rpms
-      
 
 let create_hash host vxs =
   let h = Hashtbl.create 10 in
@@ -151,6 +152,9 @@ let create_hash host vxs =
     | Mainiso isoname ->
       [ "branch","";
 	"sourcetype","local"] 
+    | Custom ->
+      [ "branch", "";
+	"sourcetype", "" ]
   in
   List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) (l @ extra);
   h
@@ -222,11 +226,11 @@ let wait rpc session_id classes pred =
     else return ()
   in inner ""
 
-
 let update_vxs_template_cache ~rpc ~session_id =
   lwt vms = X.VM.get_all_records ~rpc ~session_id in
   let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config && _rec.API.vM_is_a_template) vms in
   let vxs_templates = List.map (fun (ref,_rec) ->
+    let ty =  List.assoc "vxs_ty" _rec.API.vM_other_config in
     { vxs_r = ref;
       vxs_name = _rec.API.vM_name_label;
       vxs_uuid = _rec.API.vM_uuid;
@@ -238,6 +242,30 @@ let update_vxs_template_cache ~rpc ~session_id =
   lwt () = X.Pool.remove_from_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" in
   lwt () = X.Pool.add_to_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" ~value:(Jsonrpc.to_string (rpc_of_vxs_templates vxs_templates)) in
   Lwt.return ()
+
+let add_rpms host uuid rpms =
+  with_rpc_and_session host (fun ~rpc ~session_id -> 
+    let key = "rpm-blobs" in
+    lwt vm_ref = X.VM.get_by_uuid rpc session_id uuid in
+    let add_rpm file = 
+      lwt value = Utils.read_file file in
+      let blobname = Filename.basename file in
+      lwt blob = Blob.add_blob_with_content host rpc session_id vm_ref blobname value in
+      Lwt.return blob in
+    lwt blobs = Lwt_list.map_s (fun rpm -> add_rpm rpm) rpms in
+    lwt oc = X.VM.get_other_config rpc session_id vm_ref in
+    let old_rpms = try Utils.split ',' (List.assoc key oc) with _ -> [] in
+    let new_rpms = List.fold_left (fun acc blob -> blob.Blob.u :: acc) old_rpms blobs in   
+    let new_rpms = String.concat "," new_rpms in
+    let ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" oc)) in 
+    lwt () = if ty <> Custom then begin
+      lwt () = X.VM.remove_from_other_config rpc session_id vm_ref "vxs_ty" in
+      lwt () = X.VM.add_to_other_config rpc session_id vm_ref "vxs_ty" (string_of_installty Custom) in
+      lwt () = update_vxs_template_cache ~rpc ~session_id in
+      Lwt.return ()
+    end else Lwt.return () in
+    lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
+    X.VM.add_to_other_config rpc session_id vm_ref key new_rpms)
 
 let check_pxe_dir () =
   try_lwt 

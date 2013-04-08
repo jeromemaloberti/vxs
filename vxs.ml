@@ -193,12 +193,8 @@ let template_list copts branch iso latest minimal =
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
   let host_config = config copts in
-  let rpc = make_rpc copts in
   let aux () =
-    lwt session_id = X.Session.login_with_password rpc
-      (opt_str copts.username_) (opt_str copts.password_) "1.1" in
-    lwt () = Lwt_list.iter_s
-      (fun rpm -> Xs_ops.add_rpm host_config session_id uuid rpm) rpms in
+    lwt () = Xs_ops.add_rpms host_config uuid rpms in
     return ()
   in
   Lwt_main.run (aux ())
