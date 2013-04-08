@@ -290,6 +290,14 @@ let template_destroy host template_uuid =
     lwt () = update_vxs_template_cache ~rpc ~session_id in
     Lwt.return ())
   
+let template_clone host template_uuid new_name =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
+    lwt () = is_vxs_template rpc session_id vm in
+    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+    lwt () = update_vxs_template_cache ~rpc ~session_id in
+    Lwt.return ())
+  
 let install_from_template rpc session_id template_ref new_name =
   let vm = template_ref in
   lwt () = is_vxs_template rpc session_id template_ref in

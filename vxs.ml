@@ -125,6 +125,16 @@ let template_destroy copts branch iso template_name uuid =
   in
   Lwt_main.run (aux ())
 
+let template_clone copts branch iso template_name uuid new_name =
+  Printf.printf "template_clone\n";
+  let template_uuid = get_template_uuid copts branch iso template_name uuid in
+  let host = config copts in
+  let aux () =
+    lwt () = Xs_ops.template_clone host template_uuid new_name in 
+    return ()
+  in
+  Lwt_main.run (aux ())
+
 let template_install copts source nofakev6d =
   let host_config = config copts in
   let branch = match source with 
@@ -345,6 +355,24 @@ let template_destroy_cmd =
   Cli.Term.(pure template_destroy $ common_opts_t $ branch $ iso $ template_name $ uuid),
   Cli.Term.info "template-destroy" ~sdocs:common_opts_sect ~doc ~man
 
+let template_clone_cmd =
+  let docs = common_opts_sect in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
+  let template_name = template_name_opt () in
+  let uuid = uuid_opt () in
+  let new_name =
+    let doc = "New template name." in
+    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"NEW_NAME")
+  in
+  let doc = "Clone a template." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Clone an existing VXS template."] @ help_secs
+  in
+  Cli.Term.(pure template_clone $ common_opts_t $ branch $ iso $ template_name $ uuid $ new_name),
+  Cli.Term.info "template-clone" ~sdocs:common_opts_sect ~doc ~man
+
 let template_create_cmd =
   let branch = branch_opt () in
   let iso = iso_opt () in
@@ -403,7 +431,8 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [pool_install_cmd; template_create_cmd; template_destroy_cmd; template_list_cmd; add_rpms_cmd; call_rpc_cmd]
+let cmds = [ pool_install_cmd; template_clone_cmd; template_create_cmd; template_destroy_cmd; 
+	     template_list_cmd; add_rpms_cmd; call_rpc_cmd ]
 
 let () = 
   Printexc.record_backtrace true;
