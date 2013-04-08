@@ -130,30 +130,30 @@ let add_rpm host_config session_id uuid rpm_filename =
       
 
 let create_hash host vxs =
-	let h = Hashtbl.create 10 in
-	let l = [    "host",host.host;
-			     "username",host.username;
-			     "password",host.password;
-			     "vm_uuid",vxs.vm_uuid;
-			     "vxs_root_password",vxs.vxs_root_password;
-			     "post_install_uuid",vxs.post_install.Blob.u;
-			     "initscript_uuid",vxs.initscript.Blob.u;
-			     "veryfirstboot_uuid",vxs.veryfirstboot.Blob.u;
-			     "firstboot_uuid",vxs.firstboot.Blob.u;
-			     "id_dsa_uuid",vxs.id_dsa.Blob.u;
-			     "answerfile_uuid",vxs.answerfile.Blob.u;
-			     "vsed_uuid",vxs.vsed.Blob.u;
-		] in
-	let extra = match vxs.ty with
-		| Pxe branch -> 
-			[ "branch",branch;
-			  "sourcetype","url" ]
-		| Mainiso isoname ->
-			[ "branch","";
-			  "sourcetype","local"] 
-	in
-	List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) (l @ extra);
-	h
+  let h = Hashtbl.create 10 in
+  let l = [    "host",host.host;
+	       "username",host.username;
+	       "password",host.password;
+	       "vm_uuid",vxs.vm_uuid;
+	       "vxs_root_password",vxs.vxs_root_password;
+	       "post_install_uuid",vxs.post_install.Blob.u;
+	       "initscript_uuid",vxs.initscript.Blob.u;
+	       "veryfirstboot_uuid",vxs.veryfirstboot.Blob.u;
+	       "firstboot_uuid",vxs.firstboot.Blob.u;
+	       "id_dsa_uuid",vxs.id_dsa.Blob.u;
+	       "answerfile_uuid",vxs.answerfile.Blob.u;
+	       "vsed_uuid",vxs.vsed.Blob.u;
+	  ] in
+  let extra = match vxs.ty with
+    | Pxe branch -> 
+      [ "branch",branch;
+	"sourcetype","url" ]
+    | Mainiso isoname ->
+      [ "branch","";
+	"sourcetype","local"] 
+  in
+  List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) (l @ extra);
+  h
       
 class string_loader =
 object
@@ -169,11 +169,11 @@ let loader = new string_loader
 let cache = CamlTemplate.Cache.create ~loader ()
 
 let get template host vxs =
-	let h = create_hash host vxs in
-	let tmpl = CamlTemplate.Cache.get_template cache template in
-	let buf = Buffer.create 256 in
-	CamlTemplate.merge tmpl h buf;
-	Buffer.contents buf
+  let h = create_hash host vxs in
+  let tmpl = CamlTemplate.Cache.get_template cache template in
+  let buf = Buffer.create 256 in
+  CamlTemplate.merge tmpl h buf;
+  Buffer.contents buf
 
 let get_pxe_config = get Template.pxe_config_tmpl
 let get_firstboot = get Template.firstboot_tmpl
@@ -240,38 +240,65 @@ let update_vxs_template_cache ~rpc ~session_id =
   Lwt.return ()
 
 let check_pxe_dir () =
-	try_lwt 
-		Lwt_unix.stat pxedir >> return ()
-    with _ ->
-		fail (Failure "No PXE dir")
+  try_lwt 
+    Lwt_unix.stat pxedir >> return ()
+  with _ ->
+    fail (Failure "No PXE dir")
 
 let get_xenserver_templates ~rpc ~session_id =
-    lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
-    lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
-    let result = 
-      try 
-	let s = List.assoc "vxs_template_cache" oc in
-	vxs_templates_of_rpc (Jsonrpc.of_string s)
-      with _ ->
-	[] 
-    in
-    Lwt.return result
+  lwt p = X.Pool.get_all ~rpc ~session_id >|= List.hd in
+  lwt oc = X.Pool.get_other_config ~rpc ~session_id ~self:p in
+  let result = 
+    try 
+      let s = List.assoc "vxs_template_cache" oc in
+      vxs_templates_of_rpc (Jsonrpc.of_string s)
+    with _ ->
+      [] 
+  in
+  Lwt.return result
 
 let get_xenserver_templates_main host =
   with_rpc_and_session host get_xenserver_templates
 
+let is_vxs_template rpc session_id template_ref =
+  lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:template_ref in
+  lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
+  lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:template_ref in
+  if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return ()
+
+let template_uninstall rpc session_id t_ref =
+  lwt vbds = X.VM.get_VBDs ~rpc ~session_id ~self:t_ref in
+  lwt vdis = Lwt_list.fold_left_s 
+    (fun acc vbd -> try
+			(* We only destroy VDIs where VBD.other_config contains 'owner' *)
+		      lwt other_config = X.VBD.get_other_config rpc session_id vbd in
+		      lwt vdi = X.VBD.get_VDI rpc session_id vbd in
+			(* Double-check the VDI actually exists *)
+		      ignore(X.VDI.get_uuid rpc session_id vdi);
+		      if List.mem_assoc "owner" other_config
+		      then Lwt.return (vdi :: acc) else Lwt.return acc
+      with _ -> Lwt.return acc) [] vbds in
+  lwt () = X.VM.destroy rpc session_id t_ref in
+  lwt () = Lwt_list.iter_s (fun vdi -> X.VDI.destroy rpc session_id vdi) vdis in
+  Lwt.return ()
+    
+let template_destroy host template_uuid =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
+    lwt () = is_vxs_template rpc session_id vm in
+    lwt () = template_uninstall rpc session_id vm in
+    lwt () = update_vxs_template_cache ~rpc ~session_id in
+    Lwt.return ())
+  
 let install_from_template rpc session_id template_ref new_name =
-    let vm = template_ref in
-    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
-    lwt () = if not (List.mem_assoc "vxs_template" oc) then Lwt.fail (Failure "not a VXS template") else Lwt.return () in
-    lwt is_t = X.VM.get_is_a_template ~rpc ~session_id ~self:vm in
-    lwt () = if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return () in
-    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
-    lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
-    lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
-    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
-    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
-    Lwt.return (new_vm,uuid)
+  let vm = template_ref in
+  lwt () = is_vxs_template rpc session_id template_ref in
+  lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+  lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
+  lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs_template" in
+  lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:new_vm ~key:"vxs" ~value:"true" in
+  lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+  Lwt.return (new_vm,uuid)
 
 let install_vxs host template new_name =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
@@ -279,11 +306,11 @@ let install_vxs host template new_name =
       try_lwt 
         X.VM.get_by_uuid ~rpc ~session_id ~uuid:template
       with _ -> 
-         lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
-         Lwt.return (List.hd vms)
+        lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
+        Lwt.return (List.hd vms)
     in
     install_from_template rpc session_id vm new_name)
-
+    
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
   with_rpc_and_session host (fun ~rpc ~session_id -> 
