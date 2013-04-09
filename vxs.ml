@@ -220,6 +220,19 @@ let exec copts vm script nowait =
   in
   Lwt_main.run (aux ())
 
+let ssh copts vm =
+  Printf.printf "ssh %s\n" vm;
+  let host_config = config copts in
+  let aux () =
+    lwt ip = Xs_ops.get_vm_ip host_config vm in
+    Printf.printf "ip %s\n" ip;
+    let ssh_addr = "root@" ^ ip in
+    (* Transfer control directly to another program in the path. *)
+    let () = Unix.execvp "ssh" [| "ssh"; ssh_addr |] in
+    Lwt.return ()
+   in
+  Lwt_main.run (aux ())
+
 (*	let uri = Printf.sprintf "http://%s/" !host in
         let rpc = make uri in
         lwt session_id = Session.login_with_password rpc !username !password "1.0" in
@@ -434,6 +447,20 @@ let exec_cmd =
   Cli.Term.(pure exec $ common_opts_t $ vm $ script $ nowait),
   Cli.Term.info "exec" ~sdocs:common_opts_sect ~doc ~man
 
+let ssh_cmd =
+  let docs = common_opts_sect in
+  let vm =
+    let doc = "UUID or name of the VM." in
+    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"VM")
+  in
+  let doc = "Execute a script on a VM." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Execute a script on a VM."] @ help_secs
+  in
+  Cli.Term.(pure ssh $ common_opts_t $ vm),
+  Cli.Term.info "ssh" ~sdocs:common_opts_sect ~doc ~man
+
 let default_cmd =
   let doc = "Virtual XenServer Management Toolkit" in
   let man = help_secs in
@@ -441,7 +468,7 @@ let default_cmd =
   Cli.Term.info "vxs" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
 let cmds = [ pool_install_cmd; template_clone_cmd; template_create_cmd; template_destroy_cmd; 
-	     template_list_cmd; add_rpms_cmd; exec_cmd ]
+	     template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd ]
 
 let () = 
   Printexc.record_backtrace true;

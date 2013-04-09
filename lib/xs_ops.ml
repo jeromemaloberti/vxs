@@ -539,3 +539,10 @@ let exec_rpc host id script nowait =
     end else Lwt.return () in
     Lwt.return ()
   )
+
+let get_vm_ip host id = 
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt (vm_ref,uuid) = get_by_uuid_or_by_name rpc session_id id in
+    lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm_ref in
+    let ip = List.assoc "vxs_ip" oc in
+    Lwt.return ip)
