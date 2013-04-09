@@ -337,15 +337,22 @@ let install_from_template rpc session_id template_ref new_name =
   lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
   Lwt.return (new_vm,uuid)
 
+let get_by_uuid_or_by_name rpc session_id id =
+  lwt vm = 
+    try_lwt 
+      lwt vm_ref = X.VM.get_by_uuid ~rpc ~session_id ~uuid:id in
+      Lwt.return (vm_ref,id)
+    with _ -> 
+      lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:id in
+      let hd = List.hd vms in
+      lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:hd in
+      Lwt.return (hd,uuid)
+  in
+  Lwt.return vm
+
 let install_vxs host template new_name =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
-    lwt vm = 
-      try_lwt 
-        X.VM.get_by_uuid ~rpc ~session_id ~uuid:template
-      with _ -> 
-        lwt vms = X.VM.get_by_name_label ~rpc ~session_id ~label:template in
-        Lwt.return (List.hd vms)
-    in
+    lwt (vm,uuid) = get_by_uuid_or_by_name rpc session_id template in
     install_from_template rpc session_id vm new_name)
     
 let create_xenserver_template host ty =
@@ -519,3 +526,16 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     Printf.printf "All done. Time for pool join: %f seconds\n%!" (endtime2 -. endtime);
     List.iter (fun (rc,out,err) -> Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err) responses;
     Lwt.return ())
+
+let exec_rpc host id script nowait =
+  with_rpc_and_session host (fun ~rpc ~session_id -> 
+    lwt script = Utils.read_file script in
+    lwt (vm_ref,uuid) = get_by_uuid_or_by_name rpc session_id id in
+    lwt n = submit_rpc host session_id uuid script in
+    lwt () = if not nowait then begin
+      lwt (rc,out,err) = get_response host session_id uuid n in
+      Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err;
+      Lwt.return ()
+    end else Lwt.return () in
+    Lwt.return ()
+  )

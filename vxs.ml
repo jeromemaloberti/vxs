@@ -211,18 +211,11 @@ let add_rpms copts uuid rpms =
   in
   Lwt_main.run (aux ())
 
-let call_rpc copts uuid script =
-  Printf.printf "call-rpc %s %s\n" uuid script;
+let exec copts vm script nowait =
+  Printf.printf "exec %s %s\n" vm script;
   let host_config = config copts in
-  let rpc = make_rpc copts in
   let aux () =
-    lwt script = Utils.read_file script in
-    lwt session_id = X.Session.login_with_password rpc
-      (opt_str copts.username_) (opt_str copts.password_) "1.1" in
-    lwt n = Xs_ops.submit_rpc host_config session_id uuid script in
-    lwt (rc,out,err) = Xs_ops.get_response host_config session_id uuid n in
-    Printf.printf "Return code: %d\nout: %s\nerr: %s%!" rc out err;
-    exit rc;
+    lwt () = Xs_ops.exec_rpc host_config vm script nowait in
     return ()
   in
   Lwt_main.run (aux ())
@@ -419,23 +412,27 @@ let template_list_cmd =
   Cli.Term.(pure template_list $ common_opts_t $ branch $ iso $ latest $ minimal),
   Cli.Term.info "template-list" ~sdocs:common_opts_sect ~doc ~man
     
-let call_rpc_cmd =
+let exec_cmd =
   let docs = common_opts_sect in
-  let uuid =
-    let doc = "UUID of the VM." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"UUID")
+  let vm =
+    let doc = "UUID or name of the VM." in
+    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"VM")
   in
   let script =
     let doc = "Script to execute on the VM." in
     Cli.Arg.(required & pos 2 (some non_dir_file) None & info [] ~docv:"SCRIPT" ~doc ~docs)
+  in
+  let nowait =
+    let doc = "Do not wait for the execution." in
+    Cli.Arg.(value & flag & info ["n"; "nowait"] ~doc)
   in
   let doc = "Execute a script on a VM." in
   let man = [
     `S "DESCRIPTION";
     `P "Execute a script on a VM."] @ help_secs
   in
-  Cli.Term.(pure call_rpc $ common_opts_t $ uuid $ script),
-  Cli.Term.info "call-rpc" ~sdocs:common_opts_sect ~doc ~man
+  Cli.Term.(pure exec $ common_opts_t $ vm $ script $ nowait),
+  Cli.Term.info "exec" ~sdocs:common_opts_sect ~doc ~man
 
 let default_cmd =
   let doc = "Virtual XenServer Management Toolkit" in
@@ -444,7 +441,7 @@ let default_cmd =
   Cli.Term.info "vxs" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
 let cmds = [ pool_install_cmd; template_clone_cmd; template_create_cmd; template_destroy_cmd; 
-	     template_list_cmd; add_rpms_cmd; call_rpc_cmd ]
+	     template_list_cmd; add_rpms_cmd; exec_cmd ]
 
 let () = 
   Printexc.record_backtrace true;
