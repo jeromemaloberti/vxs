@@ -18,20 +18,27 @@ open Lwt
 module X = Xen_api_lwt_unix
 open Cohttp_lwt_unix
 module Cli = Cmdliner
-
-type common_opts = { host_: string; username_: string option; password_: string option}
+    
+type common_opts = { host_: string option; username_: string option; password_: string option}
 
 let opt_str = function None -> "None" |	Some v -> v
 
+let config_host copts file_opts =
+  Host.({host = (Options.default_opt_no_none file_opts.Options.host copts.host_ "host");
+         username = opt_str (Options.default_opt file_opts.Options.username copts.username_);
+         password = opt_str (Options.default_opt file_opts.Options.password copts.password_)})
+    
 let config copts =
-	Host.({host = copts.host_;
-         username = opt_str copts.username_;
-         password = opt_str copts.password_})
+  let file_opts = Options.get_file_opts () in
+  config_host copts file_opts
 
-let make_rpc copts =
-  let uri = Printf.sprintf "http://%s/" copts.host_ in
-  let rpc = X.make uri in
-  rpc
+let config_pool copts nfs_server nfs_path =
+  let file_opts = Options.get_file_opts () in
+  let host = config_host copts file_opts in
+  let nfs_server = Options.default_opt file_opts.Options.nfs_server nfs_server in
+  let nfs_path = Options.default_opt file_opts.Options.nfs_path nfs_path in
+  (host, nfs_server, nfs_path)
+
 
 (* From opam *)
 let mk_subdoc ?(names="COMMANDS") commands =
@@ -108,7 +115,7 @@ let pool_create copts nhosts nfs_server nfs_path branch iso template_name uuid p
   let rpms = List.fold_left (fun acc r -> match r with Some rpm -> rpm :: acc | None -> acc) [] rpms in
   Printf.printf "add-rpms %s\n" (String.concat ", " rpms);
   let template_uuid = get_template_uuid copts branch iso template_name uuid in
-  let host = config copts in
+  let (host,nfs_server,nfs_path) = config_pool copts nfs_server nfs_path in
   let aux () =
     lwt () = if (List.length rpms) > 0 then begin
       lwt (_,uuid) = Xs_ops.template_clone host template_uuid (template_uuid ^ "_temp") in
@@ -156,11 +163,8 @@ let template_install copts source nofakev6d =
     lwt vm_uuid = Xs_ops.create_xenserver_template host_config source in
     Printf.printf "%s\n" vm_uuid;
     if not nofakev6d then begin
-      let rpc = make_rpc copts in
       let rpm = Printf.sprintf "/usr/groups/admin/web/www.uk.xensource.com/html/carbon/%s/latest/xe-phase-1/v6-test.rpm" branch in
-      lwt session_id = X.Session.login_with_password rpc
-        (opt_str copts.username_) (opt_str copts.password_) "1.1" in
-      lwt () = Xs_ops.add_rpm host_config session_id vm_uuid rpm in
+      lwt () = Xs_ops.add_rpms host_config vm_uuid [rpm] in
       return ()
     end else
       return ()
@@ -274,7 +278,7 @@ let common_opts_t =
   let docs = common_opts_sect in
   let host =
     let doc = "Hostname to connect to." in
-    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"HOST")
+    Cli.Arg.(value & opt (some string) None & info ["h"; "host"] ~docs ~doc ~docv:"HOST")
   in
   let user =
     let doc = "Username to log in with." in
@@ -310,11 +314,11 @@ let add_rpms_cmd =
   let docs = common_opts_sect in
   let uuid =
     let doc = "UUID of the VM." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"UUID")
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"UUID")
   in
   let rpms =
     let doc = "RPM files to copy to the VM." in
-    Cli.Arg.(non_empty & pos_right 1 non_dir_file [] & info [] ~docv:"RPMS" ~doc ~docs)
+    Cli.Arg.(non_empty & pos_right 0 non_dir_file [] & info [] ~docv:"RPMS" ~doc ~docs)
   in
   let doc = "Copy and install RPM files in a VM." in
   let man = [
@@ -344,7 +348,7 @@ let pool_install_cmd =
   let uuid = uuid_opt () in
   let pool_name =
     let doc = "Pool name." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"POOL_NAME")
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"POOL_NAME")
   in
   let rpms =
     let doc = "RPMs to copy to the pool." in
@@ -381,7 +385,7 @@ let template_clone_cmd =
   let uuid = uuid_opt () in
   let new_name =
     let doc = "New template name." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"NEW_NAME")
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"NEW_NAME")
   in
   let doc = "Clone a template." in
   let man = [
@@ -429,11 +433,11 @@ let exec_cmd =
   let docs = common_opts_sect in
   let vm =
     let doc = "UUID or name of the VM." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"VM")
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"VM")
   in
   let script =
     let doc = "Script to execute on the VM." in
-    Cli.Arg.(required & pos 2 (some non_dir_file) None & info [] ~docv:"SCRIPT" ~doc ~docs)
+    Cli.Arg.(required & pos 1 (some non_dir_file) None & info [] ~docv:"SCRIPT" ~doc ~docs)
   in
   let nowait =
     let doc = "Do not wait for the execution." in
@@ -451,7 +455,7 @@ let ssh_cmd =
   let docs = common_opts_sect in
   let vm =
     let doc = "UUID or name of the VM." in
-    Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"VM")
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"VM")
   in
   let doc = "Execute a script on a VM." in
   let man = [
