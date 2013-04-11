@@ -24,10 +24,14 @@ type common_opts = { host_: string option; username_: string option; password_: 
 let opt_str = function None -> "None" |	Some v -> v
 
 let config_host copts file_opts =
-  Host.({host = (Options.default_opt_no_none file_opts.Options.host copts.host_ "host");
-         username = opt_str (Options.default_opt file_opts.Options.username copts.username_);
-         password = opt_str (Options.default_opt file_opts.Options.password copts.password_)})
-    
+  try 
+    Host.({host = (Options.default_opt_no_none file_opts.Options.host copts.host_ "host");
+           username = opt_str (Options.default_opt file_opts.Options.username copts.username_);
+           password = opt_str (Options.default_opt file_opts.Options.password copts.password_)})
+  with Options.Option_not_set opt ->
+    Printf.printf "Error: you need to give a value to option: %s\n" opt;
+    exit 1
+
 let config copts =
   let file_opts = Options.get_file_opts () in
   config_host copts file_opts

@@ -34,7 +34,7 @@ let get_file_opts () =
       opts_of_string f
     end
 
-exception Option_not_set
+exception Option_not_set of string
 
 let default_opt default opt =
   match default with
@@ -49,5 +49,4 @@ let default_opt_no_none default opt opt_name =
   match value with
     Some o -> o
   | None -> 
-    Printf.printf "Option %s is not set\n" opt_name;
-    raise Option_not_set 
+    raise (Option_not_set opt_name)
