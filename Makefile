@@ -12,6 +12,7 @@ lib/template.ml: lib/template.mlify
 
 clean:
 	obuild clean
+	rm -f lib/template.ml
 
 install: all
 	ocamlfind install xsops lib/META dist/build/lib-xsops/*.cma dist/build/lib-xsops/*.cmi dist/build/lib-xsops/*.cmxa dist/build/lib-xsops/*.a
