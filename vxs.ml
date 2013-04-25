@@ -120,7 +120,6 @@ let pool_create copts nhosts nfs_server nfs_path branch iso template_name uuid p
   Printf.printf "pool_create nhost %d nfs_server %s nfs_path %s branch %s iso %s template %s uuid %s pool %s\n"
     nhosts (opt_str nfs_server) (opt_str nfs_path) (opt_str branch) (opt_str iso) (opt_str template_name) (opt_str uuid) 
     pool_name;
-  let rpms = List.fold_left (fun acc r -> match r with Some rpm -> rpm :: acc | None -> acc) [] rpms in
   Printf.printf "add-rpms %s\n" (String.concat ", " rpms);
   let template_uuid = get_template_uuid copts branch iso template_name uuid in
   let (host,nfs_server,nfs_path) = config_pool copts nfs_server nfs_path in
