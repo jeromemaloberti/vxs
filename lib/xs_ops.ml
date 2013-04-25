@@ -532,12 +532,12 @@ let exec_rpc host id script nowait =
     lwt script = Utils.read_file script in
     lwt (vm_ref,uuid) = get_by_uuid_or_by_name rpc session_id id in
     lwt n = submit_rpc host session_id uuid script in
-    lwt () = if not nowait then begin
+    lwt rc = if not nowait then begin
       lwt (rc,out,err) = get_response host session_id uuid n in
       Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err;
-      Lwt.return ()
-    end else Lwt.return () in
-    Lwt.return ()
+      Lwt.return rc
+    end else Lwt.return 0 in
+    Lwt.return rc
   )
 
 let get_vm_ip host id = 

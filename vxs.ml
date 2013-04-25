@@ -230,8 +230,8 @@ let exec copts vm script nowait =
   Printf.printf "exec %s %s\n" vm script;
   let host_config = config copts in
   let aux () =
-    lwt () = Xs_ops.exec_rpc host_config vm script nowait in
-    return ()
+    lwt rc = Xs_ops.exec_rpc host_config vm script nowait in
+    exit rc
   in
   Lwt_main.run (aux ())
 
