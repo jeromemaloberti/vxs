@@ -166,6 +166,9 @@ let template_install copts source nofakev6d =
   let aux () =
     lwt vm_uuid = Xs_ops.create_xenserver_template host_config source in
     Printf.printf "%s\n" vm_uuid;
+    let nofakev6d = match branch with
+      | "trunk-ring3" | "clearwater" -> true
+      | _ -> nofakev6d in
     if not nofakev6d then begin
       let rpm = Printf.sprintf "/usr/groups/admin/web/www.uk.xensource.com/html/carbon/%s/latest/xe-phase-1/v6-test.rpm" branch in
       lwt () = Xs_ops.add_rpms host_config vm_uuid [rpm] in
