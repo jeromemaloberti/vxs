@@ -490,6 +490,16 @@ let rec l_init = function
   | 0 -> []
   | n -> n :: (l_init (n-1))
 
+let create_vm' ~rpc ~session_id template vm_name =
+  lwt templates = get_xenserver_templates rpc session_id in
+  lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
+  lwt (vm,u) = install_from_template rpc session_id t.vxs_r vm_name in
+  lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+  Lwt.return (vm,u)
+
+let create_vm host template vm_name =
+  with_rpc_and_session host (fun ~rpc ~session_id -> create_vm' ~rpc ~session_id template vm_name)
+
 let create_pool host template pool_name nhosts nfs_server nfs_path =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     let starttime = Unix.gettimeofday () in
