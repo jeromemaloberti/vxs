@@ -243,29 +243,31 @@ let update_vxs_template_cache ~rpc ~session_id =
   lwt () = X.Pool.add_to_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" ~value:(Jsonrpc.to_string (rpc_of_vxs_templates vxs_templates)) in
   Lwt.return ()
 
+let add_rpms' ~rpc ~session_id host uuid rpms =
+  let key = "rpm-blobs" in
+  lwt vm_ref = X.VM.get_by_uuid rpc session_id uuid in
+  let add_rpm file =
+    lwt value = Utils.read_file file in
+    let blobname = Filename.basename file in
+    lwt blob = Blob.add_blob_with_content host rpc session_id vm_ref blobname value in
+    Lwt.return blob in
+  lwt blobs = Lwt_list.map_s (fun rpm -> add_rpm rpm) rpms in
+  lwt oc = X.VM.get_other_config rpc session_id vm_ref in
+  let old_rpms = try Utils.split ',' (List.assoc key oc) with _ -> [] in
+  let new_rpms = List.fold_left (fun acc blob -> blob.Blob.u :: acc) old_rpms blobs in
+  let new_rpms = String.concat "," new_rpms in
+  let ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" oc)) in
+  lwt () = if ty <> Custom then begin
+    lwt () = X.VM.remove_from_other_config rpc session_id vm_ref "vxs_ty" in
+    lwt () = X.VM.add_to_other_config rpc session_id vm_ref "vxs_ty" (string_of_installty Custom) in
+    lwt () = update_vxs_template_cache ~rpc ~session_id in
+    Lwt.return ()
+  end else Lwt.return () in
+  lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
+  X.VM.add_to_other_config rpc session_id vm_ref key new_rpms
+
 let add_rpms host uuid rpms =
-  with_rpc_and_session host (fun ~rpc ~session_id -> 
-    let key = "rpm-blobs" in
-    lwt vm_ref = X.VM.get_by_uuid rpc session_id uuid in
-    let add_rpm file = 
-      lwt value = Utils.read_file file in
-      let blobname = Filename.basename file in
-      lwt blob = Blob.add_blob_with_content host rpc session_id vm_ref blobname value in
-      Lwt.return blob in
-    lwt blobs = Lwt_list.map_s (fun rpm -> add_rpm rpm) rpms in
-    lwt oc = X.VM.get_other_config rpc session_id vm_ref in
-    let old_rpms = try Utils.split ',' (List.assoc key oc) with _ -> [] in
-    let new_rpms = List.fold_left (fun acc blob -> blob.Blob.u :: acc) old_rpms blobs in   
-    let new_rpms = String.concat "," new_rpms in
-    let ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" oc)) in 
-    lwt () = if ty <> Custom then begin
-      lwt () = X.VM.remove_from_other_config rpc session_id vm_ref "vxs_ty" in
-      lwt () = X.VM.add_to_other_config rpc session_id vm_ref "vxs_ty" (string_of_installty Custom) in
-      lwt () = update_vxs_template_cache ~rpc ~session_id in
-      Lwt.return ()
-    end else Lwt.return () in
-    lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
-    X.VM.add_to_other_config rpc session_id vm_ref key new_rpms)
+  with_rpc_and_session host (fun ~rpc ~session_id -> add_rpms' ~rpc ~session_id host uuid rpms)
 
 let check_pxe_dir () =
   try_lwt 
@@ -298,7 +300,7 @@ let template_uninstall rpc session_id t_ref =
   lwt vbds = X.VM.get_VBDs ~rpc ~session_id ~self:t_ref in
   lwt vdis = Lwt_list.fold_left_s 
     (fun acc vbd -> try
-			(* We only destroy VDIs where VBD.other_config contains 'owner' *)
+		      (* We only destroy VDIs where VBD.other_config contains 'owner' *)
 		      lwt other_config = X.VBD.get_other_config rpc session_id vbd in
 		      lwt vdi = X.VBD.get_VDI rpc session_id vbd in
 			(* Double-check the VDI actually exists *)
@@ -310,22 +312,27 @@ let template_uninstall rpc session_id t_ref =
   lwt () = Lwt_list.iter_s (fun vdi -> X.VDI.destroy rpc session_id vdi) vdis in
   Lwt.return ()
     
+let template_destroy' ~rpc ~session_id template_uuid =
+  lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
+  lwt () = is_vxs_template rpc session_id vm in
+  lwt () = template_uninstall rpc session_id vm in
+  lwt () = update_vxs_template_cache ~rpc ~session_id in
+  Lwt.return ()
+
 let template_destroy host template_uuid =
-  with_rpc_and_session host (fun ~rpc ~session_id ->
-    lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
-    lwt () = is_vxs_template rpc session_id vm in
-    lwt () = template_uninstall rpc session_id vm in
-    lwt () = update_vxs_template_cache ~rpc ~session_id in
-    Lwt.return ())
-  
+  with_rpc_and_session host (fun ~rpc ~session_id ->template_destroy' ~rpc ~session_id template_uuid)
+
+let template_clone' ~rpc ~session_id template_uuid new_name =
+  lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
+  lwt () = is_vxs_template rpc session_id vm in
+  lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
+  lwt () = update_vxs_template_cache ~rpc ~session_id in
+  lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+  Lwt.return (new_vm,uuid)
+
 let template_clone host template_uuid new_name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
-    lwt vm = X.VM.get_by_uuid ~rpc ~session_id ~uuid:template_uuid in
-    lwt () = is_vxs_template rpc session_id vm in
-    lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
-    lwt () = update_vxs_template_cache ~rpc ~session_id in
-    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
-    Lwt.return (new_vm,uuid))
+    template_clone' ~rpc ~session_id template_uuid new_name)
   
 let install_from_template rpc session_id template_ref new_name =
   let vm = template_ref in
