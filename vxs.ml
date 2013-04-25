@@ -78,24 +78,28 @@ let mk_subcommands ?name commands initial_pos =
   mk_subcommands_aux ?name Cli.Arg.enum commands None initial_pos
 
 let get_all_templates copts branch iso name =
-  let aux () =
-    let host_config = config copts in
-    lwt templates = Xs_ops.get_xenserver_templates_main host_config in
-    let open Xs_ops in
-    return (List.filter (fun t -> 
-      (match name with
-      | Some n -> t.vxs_name = n
-      | None -> true) &&
-	(match branch with 
-	| Some b -> (match t.vxs_ty with Pxe b' -> b = b' | _ -> false)
+  if branch = None && iso = None && name = None then
+    []
+  else begin
+    let aux () =
+      let host_config = config copts in
+      lwt templates = Xs_ops.get_xenserver_templates_main host_config in
+      let open Xs_ops in
+      return (List.filter (fun t ->
+	(match name with
+	| Some n -> t.vxs_name = n
 	| None -> true) &&
-	(match iso with 
-	| Some i -> (match t.vxs_ty with Mainiso i' -> i = i' | _ -> false)
-	| None -> true))
-	      templates)
-  in
-  Lwt_main.run (aux ())
- 
+	  (match branch with
+	  | Some b -> (match t.vxs_ty with Pxe b' -> b = b' | _ -> false)
+	  | None -> true) &&
+	  (match iso with
+	  | Some i -> (match t.vxs_ty with Mainiso i' -> i = i' | _ -> false)
+	  | None -> true))
+		templates)
+    in
+    Lwt_main.run (aux ())
+  end
+
 let get_template_uuid copts branch iso name uuid =
   Printf.printf "Template branch %s iso %s template %s uuid %s\n"
     (opt_str branch) (opt_str iso) (opt_str name) (opt_str uuid);
@@ -359,7 +363,7 @@ let pool_install_cmd =
   in
   let rpms =
     let doc = "RPMs to copy to the pool." in
-    Cli.Arg.(value & opt_all (some string) [] & info ["r"] ~docs ~doc ~docv:"RPM")
+    Cli.Arg.(value & pos_right 0 non_dir_file [] & info [] ~docs ~doc ~docv:"RPM")
   in
   let doc = "Install a pool." in
   let man = [
