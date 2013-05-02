@@ -130,8 +130,12 @@ let add_rpm host_config session_id uuid rpm_filename =
   lwt () = X.VM.remove_from_other_config rpc session_id vm_ref key in
   X.VM.add_to_other_config rpc session_id vm_ref key new_rpms
 
-let create_hash host vxs =
+let create_hash l =
   let h = Hashtbl.create 10 in
+  List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) l;
+  h
+
+let create_hash_vxs host vxs =
   let l = [    "host",host.host;
 	       "username",host.username;
 	       "password",host.password;
@@ -156,8 +160,7 @@ let create_hash host vxs =
       [ "branch", "";
 	"sourcetype", "" ]
   in
-  List.iter (fun (x,y) -> Hashtbl.add h x (Tstr y)) (l @ extra);
-  h
+  create_hash (l @ extra)
       
 class string_loader =
 object
@@ -172,20 +175,27 @@ let loader = new string_loader
 
 let cache = CamlTemplate.Cache.create ~loader ()
 
-let get template host vxs =
-  let h = create_hash host vxs in
+let get template h =
   let tmpl = CamlTemplate.Cache.get_template cache template in
   let buf = Buffer.create 256 in
   CamlTemplate.merge tmpl h buf;
   Buffer.contents buf
 
-let get_pxe_config = get Template.pxe_config_tmpl
-let get_firstboot = get Template.firstboot_tmpl
-let get_initscript = get Template.initscript_tmpl
-let get_post_install = get Template.post_install_tmpl
-let get_answerfile = get Template.answerfile_tmpl
-let get_veryfirstboot = get Template.veryfirstboot_tmpl
-let get_linux_cmdline = get Template.linux_cmdline_tmpl
+let get_template template l = 
+  let h = create_hash l in
+  get template h
+
+let get_vxs template host vxs =
+  let h = create_hash_vxs host vxs in
+  get template h
+
+let get_pxe_config = get_vxs Template.pxe_config_tmpl
+let get_firstboot = get_vxs Template.firstboot_tmpl
+let get_initscript = get_vxs Template.initscript_tmpl
+let get_post_install = get_vxs Template.post_install_tmpl
+let get_answerfile = get_vxs Template.answerfile_tmpl
+let get_veryfirstboot = get_vxs Template.veryfirstboot_tmpl
+let get_linux_cmdline = get_vxs Template.linux_cmdline_tmpl
 
 let meg = Int64.mul 1024L 1024L
 let gig = Int64.mul 1024L meg
@@ -226,6 +236,17 @@ let wait rpc session_id classes pred =
     else return ()
   in inner ""
 
+let copy_dsa host session_id id_dsa =
+  let pub_name = (Filename.concat (Sys.getenv "HOME") ".ssh/id_rsa.pub") in
+  lwt exist = try_lwt
+		lwt _ = Lwt_unix.stat pub_name in
+		Lwt.return true
+    with _ -> Lwt.return false  in
+  if exist then begin
+    lwt id_dsa_string = Utils.read_file pub_name  in
+    Blob.put_blob host session_id id_dsa id_dsa_string
+  end else Lwt.return ()
+
 let update_vxs_template_cache ~rpc ~session_id =
   lwt vms = X.VM.get_all_records ~rpc ~session_id in
   let vxs_templates = List.filter (fun (ref,_rec) -> List.mem_assoc "vxs_template" _rec.API.vM_other_config && _rec.API.vM_is_a_template) vms in
@@ -234,7 +255,7 @@ let update_vxs_template_cache ~rpc ~session_id =
     { vxs_r = ref;
       vxs_name = _rec.API.vM_name_label;
       vxs_uuid = _rec.API.vM_uuid;
-      vxs_ty = installty_of_rpc (Jsonrpc.of_string (List.assoc "vxs_ty" _rec.API.vM_other_config));
+      vxs_ty = installty_of_rpc (Jsonrpc.of_string ty);
       vxs_install_time = List.assoc "vxs_install_time" _rec.API.vM_other_config;
     }
   ) vxs_templates in
@@ -333,8 +354,15 @@ let template_clone' ~rpc ~session_id template_uuid new_name =
 let template_clone host template_uuid new_name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     template_clone' ~rpc ~session_id template_uuid new_name)
+
+let install_from_template rpc session_id vm new_name =
+  lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in 
+  lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:new_vm ~key:"disks" in
+  lwt () = X.VM.provision ~rpc ~session_id ~vm:new_vm in
+  lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:new_vm in
+  Lwt.return (new_vm,uuid)
   
-let install_from_template rpc session_id template_ref new_name =
+let install_from_vxs_template rpc session_id template_ref new_name =
   let vm = template_ref in
   lwt () = is_vxs_template rpc session_id template_ref in
   lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name in
@@ -360,8 +388,21 @@ let get_by_uuid_or_by_name rpc session_id id =
 let install_vxs host template new_name =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     lwt (vm,uuid) = get_by_uuid_or_by_name rpc session_id template in
-    install_from_template rpc session_id vm new_name)
+    install_from_vxs_template rpc session_id vm new_name)
     
+let create_vif ~rpc ~session_id vm =
+  lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
+  let (network,_) = List.hd nets in
+  X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[]
+
+let create_disk ~rpc ~session_id name size vm =
+  lwt pools = X.Pool.get_all ~rpc ~session_id in
+  let pool = List.hd pools in
+  lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
+  lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:name ~name_description:"" ~virtual_size:size ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
+  lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
+  Lwt.return ()
+
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
   with_rpc_and_session host (fun ~rpc ~session_id -> 
@@ -372,10 +413,7 @@ let create_xenserver_template host ty =
     lwt vm_uuid = X.VM.get_uuid ~rpc ~session_id ~self:vm in
     lwt () = X.VM.provision ~rpc ~session_id ~vm in
     lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:g2 ~static_max:g2 ~dynamic_min:g2 ~dynamic_max:g2 in
-    
-    lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
-    let (network,_) = List.hd nets in
-    lwt vif = X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[] in
+    lwt vif = create_vif ~rpc ~session_id vm in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
@@ -418,15 +456,7 @@ let create_xenserver_template host ty =
     
     lwt () = Blob.put_blob host session_id vsed Template.vsed_string in
     
-    let pub_name = (Filename.concat (Sys.getenv "HOME") ".ssh/id_rsa.pub") in
-    lwt exist = try_lwt 
-		  lwt _ = Lwt_unix.stat pub_name in
-		  Lwt.return true
-      with _ -> Lwt.return false  in 
-    lwt () = if exist then begin
-      lwt id_dsa_string = Utils.read_file pub_name  in
-      Blob.put_blob host session_id id_dsa id_dsa_string
-    end else Lwt.return () in   
+    lwt () = copy_dsa host session_id id_dsa in
     
     let linux_cmdline = get_linux_cmdline host vxs_template_config in
     
@@ -493,7 +523,7 @@ let rec l_init = function
 let create_vm' ~rpc ~session_id template vm_name =
   lwt templates = get_xenserver_templates rpc session_id in
   lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
-  lwt (vm,u) = install_from_template rpc session_id t.vxs_r vm_name in
+  lwt (vm,u) = install_from_vxs_template rpc session_id t.vxs_r vm_name in
   lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
   Lwt.return (vm,u)
 
@@ -506,7 +536,7 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     lwt templates = get_xenserver_templates rpc session_id in
     lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
     lwt vms = Lwt_list.map_p (fun n -> 
-      lwt (vm,u) = install_from_template rpc session_id t.vxs_r (Printf.sprintf "%s%d" pool_name n) in
+      lwt (vm,u) = install_from_vxs_template rpc session_id t.vxs_r (Printf.sprintf "%s%d" pool_name n) in
       lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
       Lwt.return (vm,u))
       (l_init nhosts) in
