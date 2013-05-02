@@ -232,6 +232,25 @@ let vm_install copts command name params =
   | Some `debian, _ -> install_debian copts name
   | _ -> Printf.printf "Wrong parameters\n";
     ()
+
+let quicktest copts branch rpms =
+  let aux () =
+    let host_config = config copts in
+    let script = "#!/bin/bash\n/opt/xensource/debug/quicktest\n" in
+    lwt rc = Xs_ops.template_exec host_config (opt_str branch) script rpms in
+    exit rc
+  in
+  Lwt_main.run (aux ())
+
+let test copts command branch rpms params =
+  let command_str = match command with Some `quicktest -> "quicktest" | _ -> "Bad" in
+  Printf.printf "test cmd:%s branch:%s params:%s rpms:%s\n" command_str (opt_str branch) (String.concat ", " params) (String.concat ", " rpms);
+  match command, params with
+  | None, []
+  | Some `quicktest, _ -> quicktest copts branch rpms
+  | _ -> Printf.printf "Wrong parameters\n";
+    ()
+
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
   let host_config = config copts in
@@ -352,6 +371,28 @@ let vm_install_cmd =
   let doc = "Commands to install VMs" in
   Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ params),
   Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
+
+let test_cmd =
+  let doc = "Commands to run tests" in
+  let commands = [
+    ["quicktest"], `quicktest, "Provision a VM from the latest template VXS of $(b,branch) and run quicktest.";
+  ] in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Commands to run tests"] @ (mk_subdoc commands) @ help_secs in
+  let command, params = mk_subcommands commands 0 in
+  let docs = common_opts_sect in
+  let branch =
+    let doc = "Branch to test." in
+    Cli.Arg.(value & opt (some string) (Some "trunk-ring3") & info ["b"; "branch"] ~docs ~doc ~docv:"BRANCH")
+  in
+  let rpms =
+    let doc = "RPM files to copy to the VM." in
+    Cli.Arg.(non_empty & pos_right 0 non_dir_file [] & info [] ~docv:"RPMS" ~doc ~docs)
+  in
+  let doc = "Copy and install RPM files in a VM." in
+  Cli.Term.(pure test $ common_opts_t $ command $ branch $ rpms $ params),
+  Cli.Term.info "test" ~sdocs:common_opts_sect ~doc ~man
 
 let add_rpms_cmd =
   let docs = common_opts_sect in
@@ -513,6 +554,7 @@ let default_cmd =
   let man = help_secs in
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
+
 
 let cmds = [ vm_install_cmd; test_cmd; pool_install_cmd; template_clone_cmd; template_create_cmd; 
 	     template_destroy_cmd; template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd ]

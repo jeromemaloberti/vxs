@@ -593,6 +593,39 @@ let get_vm_ip host id =
     lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm_ref in
     let ip = List.assoc "vxs_ip" oc in
     Lwt.return ip)
+
+let template_exec host branch script rpms =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt templates = get_xenserver_templates ~rpc ~session_id in
+    let templates = List.filter (fun t -> match t.vxs_ty with Pxe b -> branch = b | _ -> false) templates in
+    lwt () = if (List.length templates) < 1 then Lwt.fail (Failure ("No available template of branch " ^ branch)) else Lwt.return () in
+    let sorted = List.fast_sort (fun t1 t2 -> - (String.compare t1.vxs_install_time t2.vxs_install_time)) templates in
+    let latest_template = List.hd sorted in
+    Printf.printf "Lastest template of branch %s: %s\n" branch latest_template.vxs_uuid;
+    let template_uuid = latest_template.vxs_uuid in
+    (* clone template et install rpms *)
+    lwt (_,temp_uuid) = template_clone' ~rpc ~session_id template_uuid (template_uuid ^ "_temp") in
+    Printf.printf "created temporary template %s\n" temp_uuid;
+    lwt () = add_rpms' ~rpc ~session_id host temp_uuid rpms in
+    (* provision template *)
+    lwt (vm,uuid) = install_from_vxs_template rpc session_id latest_template.vxs_r "quicktest" in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    (* exec script *)
+    lwt n = submit_rpc host session_id uuid script in
+    lwt (rc,out,err) = get_response host session_id uuid n in
+    Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err;
+    (* vm_uninstall if ok and option *)
+    Printf.printf "destroying temporary template %s\n" temp_uuid;
+    lwt () = template_destroy' ~rpc ~session_id temp_uuid in
+    lwt () = if rc = 0 then begin
+      Printf.printf "Uninstalling VM %s\n" uuid;
+      lwt () = X.VM.hard_shutdown ~rpc ~session_id ~vm in
+      template_uninstall rpc session_id vm
+    end else Lwt.return () in
+    (* return rc of exec *)
+    Lwt.return rc
+  )
+
 let install_wheezy host name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt [server] = X.Host.get_all ~rpc ~session_id in
@@ -625,3 +658,4 @@ let install_wheezy host name =
     lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
     Lwt.return 0
   )
+
