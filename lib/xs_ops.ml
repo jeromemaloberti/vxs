@@ -593,3 +593,35 @@ let get_vm_ip host id =
     lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm_ref in
     let ip = List.assoc "vxs_ip" oc in
     Lwt.return ip)
+let install_wheezy host name =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt [server] = X.Host.get_all ~rpc ~session_id in
+    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
+    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
+      ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Debian Squeeze 6.0 (64-bit)\"" in
+    Printf.printf "Template %s\n" template_ref;
+    lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
+    lwt () = create_disk ~rpc ~session_id "Root disk" g40 vm in
+    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt id_rsa = Blob.add_blob rpc session_id vm "id_dsa" in
+    lwt () = copy_dsa host session_id id_rsa in
+    let post_install_tmpl = get_template Template.debian_postinstall_tmpl [
+      "server_ip",server_ip;
+      "id_rsa_blob", id_rsa.Blob.u ] in
+    Printf.printf "post_install_tmpl:\n%s\n" post_install_tmpl;
+    lwt debian_postinstall = Blob.add_blob_with_content host rpc session_id vm "postinstall" post_install_tmpl in
+    let preseed_tmpl = get_template Template.debian_preseed_tmpl
+      [ "vm_root_password",host.password; (* TODO: should be a parameter *)
+	"server_ip",server_ip;
+	"postinstall_blob", debian_postinstall.Blob.u ] in
+    lwt debian_preseed = Blob.add_blob_with_content host rpc session_id vm "preseed" preseed_tmpl in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
+      ~value:"http://ftp.uk.debian.org/debian" in
+    lwt () = X.VM.remove_from_other_config ~rpc ~session_id ~self:vm ~key:"debian-release" in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"debian-release"
+      ~value:"wheezy" in
+    let pv_val = Printf.sprintf "auto-install/enable=true url=http://%s/blob?uuid=%s interface=auto netcfg/dhcp_timeout=600 hostname=%s domain=uk.xensource.com" server_ip debian_preseed.Blob.u name in
+    lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
+    Lwt.return 0
+  )

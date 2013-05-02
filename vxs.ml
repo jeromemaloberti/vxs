@@ -216,6 +216,22 @@ let template_list copts branch iso latest minimal =
   in
   Lwt_main.run (aux ())
 
+let install_debian copts name =
+  let aux () =
+    let host_config = config copts in
+    lwt rc = Xs_ops.install_wheezy host_config name in
+    exit rc
+  in
+  Lwt_main.run (aux ())
+
+let vm_install copts command name params =
+  let command_str = match command with Some `debian -> "debian" | _ -> "Bad" in
+  Printf.printf "vm-install cmd:%s name:%s params:%s\n" command_str name (String.concat ", " params);
+  match command, params with
+  | None, []
+  | Some `debian, _ -> install_debian copts name
+  | _ -> Printf.printf "Wrong parameters\n";
+    ()
 let add_rpms copts uuid rpms =
   Printf.printf "add-rpms %s %s\n" uuid (String.concat ", " rpms);
   let host_config = config copts in
@@ -320,6 +336,23 @@ let uuid_opt () =
   Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~doc ~docv:"UUID")
 
 (* Commands *)
+let vm_install_cmd =
+  let commands = [
+    ["debian"], `debian, "Install a VM with Debian Wheezy.";
+  ] in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Commands to install VMs"] @ (mk_subdoc commands) @ help_secs in
+  let command, params = mk_subcommands commands 0 in
+  let docs = common_opts_sect in
+  let vm_name =
+    let doc = "Name of the new VM." in
+    Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"NAME")
+  in
+  let doc = "Commands to install VMs" in
+  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ params),
+  Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
+
 let add_rpms_cmd =
   let docs = common_opts_sect in
   let uuid =
@@ -481,8 +514,8 @@ let default_cmd =
   Cli.Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_opts_t)),
   Cli.Term.info "vxs" ~version:"0.2" ~sdocs:common_opts_sect ~doc ~man
 
-let cmds = [ pool_install_cmd; template_clone_cmd; template_create_cmd; template_destroy_cmd; 
-	     template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd ]
+let cmds = [ vm_install_cmd; test_cmd; pool_install_cmd; template_clone_cmd; template_create_cmd; 
+	     template_destroy_cmd; template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd ]
 
 let () = 
   Printexc.record_backtrace true;
