@@ -224,12 +224,30 @@ let install_debian copts name =
   in
   Lwt_main.run (aux ())
 
+let install_centos5 copts name =
+  let aux () =
+    let host_config = config copts in
+    lwt rc = Xs_ops.install_centos57 host_config name in
+    exit rc
+  in
+  Lwt_main.run (aux ())
+
+let install_centos6 copts name =
+  let aux () =
+    let host_config = config copts in
+    lwt rc = Xs_ops.install_centos64 host_config name in
+    exit rc
+  in
+  Lwt_main.run (aux ())
+
 let vm_install copts command name params =
   let command_str = match command with Some `debian -> "debian" | _ -> "Bad" in
   Printf.printf "vm-install cmd:%s name:%s params:%s\n" command_str name (String.concat ", " params);
   match command, params with
   | None, []
   | Some `debian, _ -> install_debian copts name
+  | Some `centos5, _ -> install_centos5 copts name
+  | Some `centos6, _ -> install_centos6 copts name
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -358,6 +376,8 @@ let uuid_opt () =
 let vm_install_cmd =
   let commands = [
     ["debian"], `debian, "Install a VM with Debian Wheezy.";
+    ["centos5"], `centos5, "Install a 32 bits VM with CentOS 5.7.";
+    ["centos6"], `centos6, "Install a 64 bits VM with CentOS 6.4.";
   ] in
   let man = [
     `S "DESCRIPTION";

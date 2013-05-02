@@ -201,6 +201,8 @@ let meg = Int64.mul 1024L 1024L
 let gig = Int64.mul 1024L meg
 let g2 = Int64.mul gig 2L
 let g40 = Int64.mul gig 40L
+let g8 = Int64.mul gig 8L
+let g32 = Int64.mul gig 32L
 let m4 = Int64.mul meg 4L
 
 let exn_to_string = function
@@ -626,6 +628,19 @@ let template_exec host branch script rpms =
     Lwt.return rc
   )
 
+let vm_cd_add ~rpc ~session_id vm cd_name device =
+  lwt vdis = X.VDI.get_by_name_label ~rpc ~session_id ~label:cd_name in
+  lwt vdis = Lwt_list.filter_s (fun vdi ->
+    lwt sr = X.VDI.get_SR ~rpc ~session_id ~self:vdi in
+    lwt ct = X.SR.get_content_type ~rpc ~session_id ~self:sr in
+    Lwt.return (ct = "iso")) vdis in
+  Printf.printf "vdis %d\n" (List.length vdis);
+  let vdi = List.hd vdis in
+  lwt vbd = X.VBD.create ~rpc ~session_id ~vM:vm ~vDI:vdi ~userdevice:device ~bootable:false ~mode:`RO
+    ~_type:`CD ~unpluggable:true ~empty:false ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~other_config:[] in
+  lwt () = X.VBD.plug ~rpc ~session_id ~self:vbd in
+  Lwt.return ()
+
 let install_wheezy host name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt [server] = X.Host.get_all ~rpc ~session_id in
@@ -635,7 +650,7 @@ let install_wheezy host name =
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Debian Squeeze 6.0 (64-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
-    lwt () = create_disk ~rpc ~session_id "Root disk" g40 vm in
+    lwt () = create_disk ~rpc ~session_id "Root disk" g8 vm in
     lwt _ = create_vif ~rpc ~session_id vm in
     lwt id_rsa = Blob.add_blob rpc session_id vm "id_dsa" in
     lwt () = copy_dsa host session_id id_rsa in
@@ -656,6 +671,48 @@ let install_wheezy host name =
       ~value:"wheezy" in
     let pv_val = Printf.sprintf "auto-install/enable=true url=http://%s/blob?uuid=%s interface=auto netcfg/dhcp_timeout=600 hostname=%s domain=uk.xensource.com" server_ip debian_preseed.Blob.u name in
     lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    Lwt.return 0
+  )
+
+let install_centos57 host name =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt [server] = X.Host.get_all ~rpc ~session_id in
+    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
+    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
+      ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 5 (32-bit)\"" in
+    Printf.printf "Template %s\n" template_ref;
+    lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
+    lwt () = create_disk ~rpc ~session_id "Root disk" g32 vm in
+    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
+      ~value:"http://www.uk.xensource.com/distros/CentOS/5.7/os/i386" in
+    lwt centos57 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos57_tmpl in
+    let pv_val = Printf.sprintf "ks=http://%s/blob?uuid=%s ksdevice=eth0" server_ip centos57.Blob.u in
+    lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    Lwt.return 0
+  )
+
+let install_centos64 host name =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt [server] = X.Host.get_all ~rpc ~session_id in
+    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
+    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
+      ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 6 (64-bit)\"" in
+    Printf.printf "Template %s\n" template_ref;
+    lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
+    lwt () = create_disk ~rpc ~session_id "Root disk" g32 vm in
+    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
+      ~value:"http://www.mirrorservice.org/sites/mirror.centos.org/6.4/os/x86_64/" in
+    lwt centos64 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos64_tmpl in
+    let pv_val = Printf.sprintf "ks=http://%s/blob?uuid=%s ksdevice=eth0" server_ip centos64.Blob.u in
+    lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
+    lwt () = vm_cd_add ~rpc ~session_id vm "xs-tools.iso" "3" in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
     Lwt.return 0
   )
 
