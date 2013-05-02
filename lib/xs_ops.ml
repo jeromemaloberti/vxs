@@ -638,7 +638,6 @@ let vm_cd_add ~rpc ~session_id vm cd_name device =
   let vdi = List.hd vdis in
   lwt vbd = X.VBD.create ~rpc ~session_id ~vM:vm ~vDI:vdi ~userdevice:device ~bootable:false ~mode:`RO
     ~_type:`CD ~unpluggable:true ~empty:false ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~other_config:[] in
-  lwt () = X.VBD.plug ~rpc ~session_id ~self:vbd in
   Lwt.return ()
 
 let install_wheezy host name =
