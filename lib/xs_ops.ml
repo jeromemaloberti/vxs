@@ -204,6 +204,7 @@ let g40 = Int64.mul gig 40L
 let g8 = Int64.mul gig 8L
 let g32 = Int64.mul gig 32L
 let m4 = Int64.mul meg 4L
+let m5 = Int64.mul meg 5L
 
 let exn_to_string = function
   | Api_errors.Server_error(code, params) ->
@@ -403,7 +404,7 @@ let create_disk ~rpc ~session_id name size vm =
   lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
   lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:name ~name_description:"" ~virtual_size:size ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
   lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
-  Lwt.return ()
+  Lwt.return vdi
 
 let create_xenserver_template host ty =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
@@ -649,7 +650,7 @@ let install_wheezy host name =
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Debian Squeeze 6.0 (64-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
-    lwt () = create_disk ~rpc ~session_id "Root disk" g8 vm in
+    lwt _ = create_disk ~rpc ~session_id "Root disk" g8 vm in
     lwt _ = create_vif ~rpc ~session_id vm in
     lwt id_rsa = Blob.add_blob rpc session_id vm "id_dsa" in
     lwt () = copy_dsa host session_id id_rsa in
@@ -683,7 +684,7 @@ let install_centos57 host name =
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 5 (32-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
-    lwt () = create_disk ~rpc ~session_id "Root disk" g32 vm in
+    lwt _ = create_disk ~rpc ~session_id "Root disk" g32 vm in
     lwt _ = create_vif ~rpc ~session_id vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.uk.xensource.com/distros/CentOS/5.7/os/i386" in
@@ -703,7 +704,7 @@ let install_centos64 host name =
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 6 (64-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
-    lwt () = create_disk ~rpc ~session_id "Root disk" g32 vm in
+    lwt _ = create_disk ~rpc ~session_id "Root disk" g32 vm in
     lwt _ = create_vif ~rpc ~session_id vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.mirrorservice.org/sites/mirror.centos.org/6.4/os/x86_64/" in
@@ -715,3 +716,46 @@ let install_centos64 host name =
     Lwt.return 0
   )
 
+let create_mirage_image kernel =
+  let fname = "/tmp/mirage.img" in
+  let mnt_path = "/mnt/mirage" in
+  lwt () = Utils.create_extfs_disk fname in
+  lwt () = Utils.mount_extfs mnt_path fname in
+  lwt _ = Lwt_process.exec
+    (Lwt_process.shell (Printf.sprintf "sudo mkdir -p \"%s/boot/grub\"" mnt_path)) in
+  lwt _ = Lwt_process.exec
+    (Lwt_process.shell (Printf.sprintf "sudo chmod a+w \"%s/boot/grub\"" mnt_path)) in
+  lwt _ = Lwt_process.exec
+    (Lwt_process.shell (Printf.sprintf "sudo chmod a+w \"%s/boot\"" mnt_path)) in
+  lwt () = Utils.copy_to_path (mnt_path ^ "/boot/grub/menu.lst") Template.mirage_boot_tmpl in
+  lwt _ = Lwt_process.exec
+    (Lwt_process.shell
+       (Printf.sprintf "sudo gzip -c \"%s\" > \"%s/boot/mirage-os.gz\"" kernel mnt_path)) in
+  lwt _ = Lwt_process.exec
+    (Lwt_process.shell (Printf.sprintf "sudo umount \"%s\"" mnt_path)) in
+  Lwt.return ()
+
+let install_mirage host name kernel =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt () = create_mirage_image kernel in
+    lwt [server] = X.Host.get_all ~rpc ~session_id in
+    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
+    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
+      ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Other install media\"" in
+    Printf.printf "Template %s\n" template_ref;
+    lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
+    lwt pools = X.Pool.get_all ~rpc ~session_id in
+    let pool = List.hd pools in
+    lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
+    lwt vdi = create_disk ~rpc ~session_id "Autoinstall disk" m5 vm in
+    lwt contents = Utils.read_file "/tmp/mirage.img"  in
+    lwt () = Utils.put_disk host session_id vdi contents in
+    lwt () = X.VM.set_PV_bootloader ~rpc ~session_id ~self:vm ~value:"pygrub" in
+    lwt () = X.VM.set_HVM_boot_policy ~rpc ~session_id ~self:vm ~value:"" in
+    lwt boot_params = X.VM.get_HVM_boot_params ~rpc ~session_id ~self:vm in
+    lwt () = Lwt_list.iter_s (fun (k,v) -> X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm
+      ~key:k) boot_params in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    Lwt.return 0
+  )

@@ -1,0 +1,49 @@
+#platform=x86, AMD64, or Intel EM64T
+# System authorization information
+auth  --useshadow  --enablemd5 
+# System bootloader configuration
+bootloader --location=mbr
+# Clear the Master Boot Record
+zerombr
+# Partition clearing information
+clearpart --all --initlabel 
+# Use text mode install
+text
+# Firewall configuration
+firewall --disabled
+# Run the Setup Agent on first boot
+firstboot --disable
+# System keyboard
+keyboard uk
+# System language
+lang en_US
+# Installation logging level
+logging --level=info
+# Use network installation
+url --url=http://www.uk.xensource.com/distros/CentOS/5.7/os/i386
+# Network information
+network --bootproto=dhcp --device=eth0 --onboot=on
+# Reboot after installation
+reboot
+#Root password
+rootpw --iscrypted $1$e0UdBrID$St2kPuR6m54bQfCQlEzr2.
+
+# SELinux configuration
+selinux --enforcing
+# Do not configure the X Window System
+skipx
+# System timezone
+timezone  Europe/London
+# Install OS instead of upgrade
+install
+# Disk partitioning information
+part / --bytes-per-inode=4096 --fstype="ext3" --grow --size=1
+%post 
+mount /dev/xvdd /mnt
+/mnt/Linux/install.sh -n
+umount /mnt
+
+
+%packages
+@development-libs
+@development-tools
