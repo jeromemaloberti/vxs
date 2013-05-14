@@ -202,6 +202,7 @@ let gig = Int64.mul 1024L meg
 let g2 = Int64.mul gig 2L
 let g40 = Int64.mul gig 40L
 let g8 = Int64.mul gig 8L
+let g16 = Int64.mul gig 16L
 let g32 = Int64.mul gig 32L
 let m4 = Int64.mul meg 4L
 let m5 = Int64.mul meg 5L
@@ -641,11 +642,20 @@ let vm_cd_add ~rpc ~session_id vm cd_name device =
     ~_type:`CD ~unpluggable:true ~empty:false ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~other_config:[] in
   Lwt.return ()
 
+let get_server_ip ~rpc ~session_id host =
+  lwt server_ip =
+    try let (_: Unix.inet_addr) = Unix.inet_addr_of_string host.host
+	in Lwt.return host.host
+    with _ ->
+      lwt [server] = X.Host.get_all ~rpc ~session_id in
+      lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
+      Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+      Lwt.return server_ip
+  in Lwt.return server_ip
+
 let install_wheezy host name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
-    lwt [server] = X.Host.get_all ~rpc ~session_id in
-    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
-    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Debian Squeeze 6.0 (64-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
@@ -677,14 +687,12 @@ let install_wheezy host name =
 
 let install_centos57 host name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
-    lwt [server] = X.Host.get_all ~rpc ~session_id in
-    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
-    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 5 (32-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
-    lwt _ = create_disk ~rpc ~session_id "Root disk" g32 vm in
+    lwt _ = create_disk ~rpc ~session_id "Root disk" g16 vm in
     lwt _ = create_vif ~rpc ~session_id vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.uk.xensource.com/distros/CentOS/5.7/os/i386" in
@@ -697,9 +705,7 @@ let install_centos57 host name =
 
 let install_centos64 host name =
   with_rpc_and_session host (fun ~rpc ~session_id ->
-    lwt [server] = X.Host.get_all ~rpc ~session_id in
-    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
-    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"CentOS 6 (64-bit)\"" in
     Printf.printf "Template %s\n" template_ref;
@@ -738,9 +744,7 @@ let create_mirage_image kernel =
 let install_mirage host name kernel =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt () = create_mirage_image kernel in
-    lwt [server] = X.Host.get_all ~rpc ~session_id in
-    lwt server_ip = X.Host.get_address ~rpc ~session_id ~self:server in
-    Printf.printf "Server %s ref %s ip %s\n" host.host server server_ip;
+    lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Other install media\"" in
     Printf.printf "Template %s\n" template_ref;
