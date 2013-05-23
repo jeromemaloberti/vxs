@@ -520,9 +520,14 @@ let create_xenserver_template host ty =
     
 exception Unknown_template of string
 
-let rec l_init = function
-  | 0 -> []
-  | n -> n :: (l_init (n-1))
+(* Return string list of vxs name suffixes i.e. ["m"; "s1"; "s2"; ...] *)
+let suffix_list_init ?(master_suffix="m") ?(slave_suffix="s") n =
+  let rec inner =
+    (function
+      | 0 -> []
+      | 1 -> [master_suffix]
+      | n -> (Printf.sprintf "%s%d" slave_suffix (n-1)) :: (inner (n-1))) in
+  List.rev (inner n)
 
 let create_vm' ~rpc ~session_id template vm_name =
   lwt templates = get_xenserver_templates rpc session_id in
@@ -539,15 +544,13 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     let starttime = Unix.gettimeofday () in
     lwt templates = get_xenserver_templates rpc session_id in
     lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
-    lwt vms = Lwt_list.map_p (fun n -> 
-      lwt (vm,u) = install_from_vxs_template rpc session_id t.vxs_r (Printf.sprintf "%s%d" pool_name n) in
+    lwt (master::slaves) = Lwt_list.map_p (fun (suffix:string) ->
+      lwt (vm,u) = install_from_vxs_template rpc session_id t.vxs_r (Printf.sprintf "%s-%s" pool_name suffix) in
       lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
       Lwt.return (vm,u))
-      (l_init nhosts) in
+      (suffix_list_init nhosts) in
     let endtime = Unix.gettimeofday () in
     Printf.printf "%d host%s created (time taken: %f seconds)\n%!" nhosts (if nhosts>1 then "s" else "") (endtime -. starttime);
-    let master = List.hd vms in
-    let slaves = List.tl vms in
     let wait_for_ip (vm,_) = 
       lwt () = wait rpc session_id [Printf.sprintf "vm/%s" vm] (function
       | Event_helper.VM (_,Some r) ->
@@ -558,6 +561,7 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
       Lwt.return ip
     in
     let starttime = Unix.gettimeofday () in
+    let vms = master::slaves in
     lwt ips = Lwt_list.map_s wait_for_ip vms in
     let endtime = Unix.gettimeofday () in
     let master_ip = List.hd ips in
