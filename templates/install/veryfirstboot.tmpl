@@ -20,15 +20,15 @@ if [ ! -e $stamp ]; then
    mkdir -p $(dirname $stamp)
    touch $stamp
 
+   \# Bring up networking temporarily and get and upgrade any RPMs we need
+   dhclient eth0 > /dev/null
+
    hostname=`xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=name-label`
    /opt/xensource/libexec/set-hostname $hostname
 
    echo ${host} > /etc/vxs_host
    echo ${username} > /etc/vxs_username
    echo ${password} > /etc/vxs_password
-
-   \# Bring up networking temporarily and get and upgrade any RPMs we need
-   dhclient eth0 > /dev/null
 
    for i in `xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=other-config param-key=rpm-blobs | sed s/,/\ /g`
    do
