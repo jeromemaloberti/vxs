@@ -68,7 +68,7 @@ let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
       List.fold_left
         (fun acc (cs,f,_) -> List.map (fun c -> c,f) cs @ acc)
         [] commands in
-    Cli.Arg.(value & pos initial_pos (some & my_enum commands) None & doc) in
+    Cli.Arg.(required & pos initial_pos (some & my_enum commands) None & doc) in
   let params =
     let doc = Cli.Arg.info ~doc:"Optional parameters." [] in
     Cli.Arg.(value & pos_right initial_pos string [] & doc) in
@@ -256,11 +256,10 @@ let install_mirage copts name kernel =
 let vm_install copts command name kernel params =
   Printf.printf "vm-install name:%s params:%s\n" name (String.concat ", " params);
   match command, params with
-  | None, []
-  | Some `debian, _ -> install_debian copts name
-  | Some `centos5, _ -> install_centos5 copts name
-  | Some `centos6, _ -> install_centos6 copts name
-  | Some `mirage, _ -> install_mirage copts name kernel
+  | `debian, _ -> install_debian copts name
+  | `centos5, _ -> install_centos5 copts name
+  | `centos6, _ -> install_centos6 copts name
+  | `mirage, _ -> install_mirage copts name kernel
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -274,11 +273,10 @@ let quicktest copts branch rpms =
   Lwt_main.run (aux ())
 
 let test copts command branch rpms params =
-  let command_str = match command with Some `quicktest -> "quicktest" | _ -> "Bad" in
+  let command_str = match command with `quicktest -> "quicktest" | _ -> "Bad" in
   Printf.printf "test cmd:%s branch:%s params:%s rpms:%s\n" command_str (opt_str branch) (String.concat ", " params) (String.concat ", " rpms);
   match command, params with
-  | None, []
-  | Some `quicktest, _ -> quicktest copts branch rpms
+  | `quicktest, _ -> quicktest copts branch rpms
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
