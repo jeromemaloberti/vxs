@@ -253,13 +253,13 @@ let install_mirage copts name kernel =
     in
     Lwt_main.run (aux ())
 
-let vm_install copts command name kernel params =
-  Printf.printf "vm-install name:%s params:%s\n" name (String.concat ", " params);
-  match command, params with
-  | `debian, _ -> install_debian copts name
-  | `centos5, _ -> install_centos5 copts name
-  | `centos6, _ -> install_centos6 copts name
-  | `mirage, _ -> install_mirage copts name kernel
+let vm_install copts command name kernel =
+  Printf.printf "vm-install name:%s\n" name;
+  match command with
+  | `debian -> install_debian copts name
+  | `centos5 -> install_centos5 copts name
+  | `centos6 -> install_centos6 copts name
+  | `mirage -> install_mirage copts name kernel
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -272,11 +272,11 @@ let quicktest copts branch rpms =
   in
   Lwt_main.run (aux ())
 
-let test copts command branch rpms params =
+let test copts command branch rpms =
   let command_str = match command with `quicktest -> "quicktest" | _ -> "Bad" in
-  Printf.printf "test cmd:%s branch:%s params:%s rpms:%s\n" command_str (opt_str branch) (String.concat ", " params) (String.concat ", " rpms);
-  match command, params with
-  | `quicktest, _ -> quicktest copts branch rpms
+  Printf.printf "test cmd:%s branch:%s rpms:%s\n" command_str (opt_str branch) (String.concat ", " rpms);
+  match command with
+  | `quicktest -> quicktest copts branch rpms
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -394,7 +394,7 @@ let vm_install_cmd =
   let man = [
     `S "DESCRIPTION";
     `P "Commands to install VMs"] @ (mk_subdoc commands) @ help_secs in
-  let command, params = mk_subcommands commands 0 in
+  let command, _ = mk_subcommands commands 0 in
   let docs = common_opts_sect in
   let vm_name =
     let doc = "Name of the new VM." in
@@ -405,7 +405,7 @@ let vm_install_cmd =
     Cli.Arg.(value & opt (some non_dir_file) None & info ["k"; "kernel"] ~docs ~doc ~docv:"KERNEL")
   in
   let doc = "Commands to install VMs" in
-  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel $ params),
+  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel),
   Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
 
 let test_cmd =
@@ -416,7 +416,7 @@ let test_cmd =
   let man = [
     `S "DESCRIPTION";
     `P "Commands to run tests"] @ (mk_subdoc commands) @ help_secs in
-  let command, params = mk_subcommands commands 0 in
+  let command, _ = mk_subcommands commands 0 in
   let docs = common_opts_sect in
   let branch =
     let doc = "Branch to test." in
@@ -427,7 +427,7 @@ let test_cmd =
     Cli.Arg.(non_empty & pos_right 0 non_dir_file [] & info [] ~docv:"RPMS" ~doc ~docs)
   in
   let doc = "Copy and install RPM files in a VM." in
-  Cli.Term.(pure test $ common_opts_t $ command $ branch $ rpms $ params),
+  Cli.Term.(pure test $ common_opts_t $ command $ branch $ rpms),
   Cli.Term.info "test" ~sdocs:common_opts_sect ~doc ~man
 
 let add_rpms_cmd =
