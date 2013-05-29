@@ -394,9 +394,10 @@ let install_vxs host template new_name =
     lwt (vm,uuid) = get_by_uuid_or_by_name rpc session_id template in
     install_from_vxs_template rpc session_id vm new_name)
     
-let create_vif ~rpc ~session_id vm =
-  lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
-  let (network,_) = List.hd nets in
+let create_vif ~rpc ~session_id host vm =
+  lwt pifs = X.PIF.get_all_records_where ~rpc ~session_id ~expr:("field \"management\" = \"true\" and field \"host\" = \"" ^ (API.Ref.string_of host) ^ "\"") in
+  let (_, pif_rec) = List.hd pifs in
+  let network = pif_rec.API.pIF_network in
   X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[]
 
 let create_disk ~rpc ~session_id name size vm =
@@ -417,11 +418,11 @@ let create_xenserver_template host ty =
     lwt vm_uuid = X.VM.get_uuid ~rpc ~session_id ~self:vm in
     lwt () = X.VM.provision ~rpc ~session_id ~vm in
     lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:g2 ~static_max:g2 ~dynamic_min:g2 ~dynamic_max:g2 in
-    lwt vif = create_vif ~rpc ~session_id vm in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
     lwt servertime = X.Host.get_servertime ~rpc ~session_id ~host:master in
+    lwt vif = create_vif ~rpc ~session_id master vm in
     lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
     lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Root disk" ~name_description:"" ~virtual_size:g40 ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
     lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
@@ -665,7 +666,10 @@ let install_wheezy host name =
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
     lwt _ = create_disk ~rpc ~session_id "Root disk" g8 vm in
-    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt pools = X.Pool.get_all ~rpc ~session_id in
+    let pool = List.hd pools in
+    lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
+    lwt _ = create_vif ~rpc ~session_id master vm in
     lwt id_rsa = Blob.add_blob rpc session_id vm "id_dsa" in
     lwt () = copy_dsa host session_id id_rsa in
     let post_install_tmpl = get_template Template.debian_postinstall_tmpl [
@@ -697,7 +701,10 @@ let install_centos57 host name =
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
     lwt _ = create_disk ~rpc ~session_id "Root disk" g16 vm in
-    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt pools = X.Pool.get_all ~rpc ~session_id in
+    let pool = List.hd pools in
+    lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
+    lwt _ = create_vif ~rpc ~session_id master vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.uk.xensource.com/distros/CentOS/5.7/os/i386" in
     lwt centos57 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos57_tmpl in
@@ -715,7 +722,10 @@ let install_centos64 host name =
     Printf.printf "Template %s\n" template_ref;
     lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
     lwt _ = create_disk ~rpc ~session_id "Root disk" g32 vm in
-    lwt _ = create_vif ~rpc ~session_id vm in
+    lwt pools = X.Pool.get_all ~rpc ~session_id in
+    let pool = List.hd pools in
+    lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
+    lwt _ = create_vif ~rpc ~session_id master vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.mirrorservice.org/sites/mirror.centos.org/6.4/os/x86_64/" in
     lwt centos64 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos64_tmpl in
