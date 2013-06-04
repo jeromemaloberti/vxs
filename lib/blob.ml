@@ -23,7 +23,7 @@ type t = {
 }
 
 let put_blob host_config session_id blob value =
-  match Body.body_of_string value with 
+  match Cohttp_lwt_body.body_of_string value with 
   | Some v -> 
     let uri = Printf.sprintf "http://%s/blob?session_id=%s&ref=%s" host_config.Host.host session_id blob.r in
     Utils.http_put uri v
