@@ -1,0 +1,21 @@
+To build, either use opam:
+
+    opam init
+    opam remote add git://github.com/xen-org/opam-repo-dev
+    opam install vxs
+
+Or manually install the following dependencies:
+
+    * Ocaml
+    * obuild
+    * camltemplate
+    * cohttp
+    * xen-api-client
+    * cmdliner
+    * ocamlify
+
+and then type:
+
+    make
+
+
