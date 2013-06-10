@@ -1,0 +1,6 @@
+unreleased:
+* update to cohttp 0.9.8
+
+0.2.0 (4-Apr-2013):
+* first public release
+
