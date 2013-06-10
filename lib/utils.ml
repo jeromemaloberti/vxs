@@ -23,17 +23,17 @@ let http_put url content =
   Client.call ~headers `PUT ~body:content ~chunked:false (Uri.of_string url) >>= function 
   |None -> assert false
   |Some (res, body) ->
-    Lwt_stream.iter_s (fun s -> return ()) (Body.stream_of_body body)
+    Lwt_stream.iter_s (fun s -> return ()) (Cohttp_lwt_body.stream_of_body body)
 
 let http_get url =
   Client.call `GET (Uri.of_string url) >>= function
   | None -> assert false
   | Some (res,body) ->
-    lwt list = (Lwt_stream.to_list (Body.stream_of_body body)) in
+    lwt list = (Lwt_stream.to_list (Cohttp_lwt_body.stream_of_body body)) in
     return (String.concat "" list)
 
 let put_disk host_config session_id vdi value =
-  match Body.body_of_string value with
+  match Cohttp_lwt_body.body_of_string value with
   | Some v ->
     let uri = Printf.sprintf "http://%s/import_raw_vdi?session_id=%s&vdi=%s" host_config.Host.host session_id vdi in
     http_put uri v
