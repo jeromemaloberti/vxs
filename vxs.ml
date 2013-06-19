@@ -240,7 +240,7 @@ let install_centos6 copts name =
   in
   Lwt_main.run (aux ())
 
-let install_mirage copts name kernel =
+let install_mirage copts name kernel n_vms =
   match kernel with
   | None ->
     Printf.printf "You need to specify a kernel!\n";
@@ -248,18 +248,18 @@ let install_mirage copts name kernel =
   | Some k ->
     let aux () =
       let host_config = config copts in
-      lwt rc = Xs_ops.install_mirage host_config name k in
+      lwt rc = Xs_ops.install_mirage host_config name k n_vms in
       exit rc
     in
     Lwt_main.run (aux ())
 
-let vm_install copts command name kernel =
+let vm_install copts command name kernel n_vms =
   Printf.printf "vm-install name:%s\n" name;
   match command with
   | `debian -> install_debian copts name
   | `centos5 -> install_centos5 copts name
   | `centos6 -> install_centos6 copts name
-  | `mirage -> install_mirage copts name kernel
+  | `mirage -> install_mirage copts name kernel n_vms
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -389,7 +389,7 @@ let vm_install_cmd =
     ["debian"], `debian, "Install a VM with Debian Wheezy.";
     ["centos5"], `centos5, "Install a 32 bits VM with CentOS 5.7.";
     ["centos6"], `centos6, "Install a 64 bits VM with CentOS 6.4.";
-    ["mirage"], `mirage, "Install a Mirage VM with the specified kernel.";
+    ["mirage"], `mirage, "Install N Mirage VMs with the specified kernel.";
   ] in
   let man = [
     `S "DESCRIPTION";
@@ -400,12 +400,16 @@ let vm_install_cmd =
     let doc = "Name of the new VM." in
     Cli.Arg.(required & pos 1 (some string) None & info [] ~docs ~doc ~docv:"NAME")
   in
+  let n_hosts =
+    let doc = "Number of Mirage VMs to install." in
+    Cli.Arg.(value & opt int 1 & info ["s"] ~docs ~doc ~docv:"NVMS")
+  in
   let kernel =
     let doc = "Mirage kernel to upload." in
     Cli.Arg.(value & opt (some non_dir_file) None & info ["k"; "kernel"] ~docs ~doc ~docv:"KERNEL")
   in
   let doc = "Commands to install VMs" in
-  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel),
+  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel $ n_hosts),
   Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
 
 let test_cmd =

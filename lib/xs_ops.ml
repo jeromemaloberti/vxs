@@ -206,6 +206,7 @@ let g16 = Int64.mul gig 16L
 let g32 = Int64.mul gig 32L
 let m4 = Int64.mul meg 4L
 let m5 = Int64.mul meg 5L
+let m24 = Int64.mul meg 24L
 
 let exn_to_string = function
   | Api_errors.Server_error(code, params) ->
@@ -745,25 +746,48 @@ let create_mirage_image kernel =
     (Lwt_process.shell (Printf.sprintf "sudo umount \"%s\"" mnt_path)) in
   Lwt.return ()
 
-let install_mirage host name kernel =
+let print_time () =
+  let t = Unix.gmtime (Unix.gettimeofday ()) in
+  Printf.printf "%02d:%02d:%02d%!\n" t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec
+
+let install_mirage' rpc session_id host template_ref default_sr contents name =
+  lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
+  lwt vdi = create_disk ~rpc ~session_id "Autoinstall disk" m5 vm in
+  lwt () = Utils.put_disk host session_id vdi contents in
+  lwt () = X.VM.set_PV_bootloader ~rpc ~session_id ~self:vm ~value:"pygrub" in
+  lwt () = X.VM.set_HVM_boot_policy ~rpc ~session_id ~self:vm ~value:"" in
+  lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:m24 ~static_max:m24 ~dynamic_min:m24 ~dynamic_max:m24 in
+  lwt boot_params = X.VM.get_HVM_boot_params ~rpc ~session_id ~self:vm in
+  lwt () = Lwt_list.iter_s (fun (k,v) -> X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm
+    ~key:k) boot_params in
+  (*    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in *)
+  Lwt.return vm
+
+let generate_names name n =
+  match n with 1 -> [name]
+  | _ -> let rec aux l n =
+	   if n = 0 then l else
+	     let name = name ^ (Printf.sprintf "%03d" n) in
+	     name :: (aux l (n-1))
+	 in
+	 List.rev(aux [] n)
+
+let install_mirage host name kernel n_vms =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt () = create_mirage_image kernel in
     lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
       ~expr:"field \"is_a_template\" = \"true\" and field \"name__label\" = \"Other install media\"" in
     Printf.printf "Template %s\n" template_ref;
-    lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
-    lwt vdi = create_disk ~rpc ~session_id "Autoinstall disk" m5 vm in
     lwt contents = Utils.read_file "/tmp/mirage.img"  in
-    lwt () = Utils.put_disk host session_id vdi contents in
-    lwt () = X.VM.set_PV_bootloader ~rpc ~session_id ~self:vm ~value:"pygrub" in
-    lwt () = X.VM.set_HVM_boot_policy ~rpc ~session_id ~self:vm ~value:"" in
-    lwt boot_params = X.VM.get_HVM_boot_params ~rpc ~session_id ~self:vm in
-    lwt () = Lwt_list.iter_s (fun (k,v) -> X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm
-      ~key:k) boot_params in
-    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+
+    let names = generate_names name n_vms in
+    lwt vm = install_mirage' rpc session_id host template_ref
+    default_sr contents (List.hd names) in
+    lwt () = Lwt_list.iter_s (fun name -> lwt new_vm = X.VM.clone ~rpc
+    ~session_id ~vm ~new_name:name in Lwt.return ())  (List.tl names) in
     Lwt.return 0
   )
