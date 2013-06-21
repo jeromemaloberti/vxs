@@ -34,9 +34,10 @@ if [ ! -e $stamp ]; then
    do
        curl -o /tmp/$i.rpm http://${host}/blob?uuid=$i
    done
-   rpm -Uvh --force --nodeps /tmp/*.rpm &> /tmp/install.log
    xe -s ${host} -u ${username} -pw ${password} vm-param-set uuid=$host other-config:rpm-blobs=
 
    killall -9 dhclient
    ifconfig eth0 0.0.0.0 down
+
+   rpm -Uvh --force --nodeps /tmp/*.rpm &> /tmp/install.log
 fi
