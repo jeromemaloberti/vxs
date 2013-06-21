@@ -530,6 +530,10 @@ let suffix_list_init ?(master_suffix="m") ?(slave_suffix="s") n =
       | n -> (Printf.sprintf "%s%d" slave_suffix (n-1)) :: (inner (n-1))) in
   List.rev (inner n)
 
+let rec diff_list l1 l2 = match l1,l2 with [],[] -> true
+  | hd1::tl1,hd2::tl2 -> if hd1 = hd2 then false else diff_list tl1 tl2
+  | _,_ -> true
+
 let create_vm' ~rpc ~session_id template vm_name =
   lwt templates = get_xenserver_templates rpc session_id in
   lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
@@ -564,6 +568,31 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     let starttime = Unix.gettimeofday () in
     let vms = master::slaves in
     lwt ips = Lwt_list.map_s wait_for_ip vms in
+    Printf.printf "IPs %s\n%!" (String.concat " " ips);
+    lwt rpcs = Lwt_list.map_s (fun (r,u) -> lwt n = submit_rpc host
+    session_id u (Printf.sprintf "#!/bin/bash\nshutdown -h 0\n") in Lwt.return (u,n)) vms in
+    lwt responses = Lwt_list.map_s (fun (u,n) -> get_response host session_id u n) rpcs in
+    List.iter (fun (rc,out,err) -> Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err) responses;
+    Printf.printf "Waiting ...\n%!";
+    lwt () = Lwt_unix.sleep 60.0 in
+    Printf.printf "Restarting VMs\n%!";
+    lwt () = Lwt_list.iter_s (fun (vm,_) -> X.VM.start ~rpc
+    ~session_id ~vm  ~start_paused:false ~force:false) vms in
+    let rec wait_until_new_IPs ips =
+      lwt () = Lwt_unix.sleep 5.0 in
+      lwt ips' = Lwt_list.map_s (fun (vm,_) ->
+	lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
+	let ip = List.assoc "vxs_ip" oc in
+	Lwt.return ip) vms in
+      Printf.printf "IPs' %s\n%!" (String.concat " " ips');
+      if diff_list ips' ips then
+	Lwt.return ips'
+      else
+	wait_until_new_IPs ips
+    in
+    Printf.printf "Waiting new IPs\n%!";
+    lwt ips = wait_until_new_IPs ips in
+    Printf.printf "IPs %s\n%!" (String.concat " " ips);
     let endtime = Unix.gettimeofday () in
     let master_ip = List.hd ips in
     let master_uuid = snd master in
