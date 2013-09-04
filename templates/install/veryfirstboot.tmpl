@@ -15,29 +15,38 @@ if [ ! -e $stamp ]; then
    echo "INSTALLATION_UUID='$host'" >> /etc/xensource-inventory
    control=`uuidgen`
    echo "CONTROL_DOMAIN_UUID='$control'" >> /etc/xensource-inventory
-
-   \# Write stamp now, in case something below fails
-   mkdir -p $(dirname $stamp)
-   touch $stamp
-
-   \# Bring up networking temporarily and get and upgrade any RPMs we need
-   dhclient eth0 > /dev/null
-
-   hostname=`xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=name-label`
-   /opt/xensource/libexec/set-hostname $hostname
-
+   
    echo ${host} > /etc/vxs_host
    echo ${username} > /etc/vxs_username
    echo ${password} > /etc/vxs_password
+
+   touch /root/1.log
+   \# Write stamp now, in case something below fails
+   mkdir -p $(dirname $stamp)
+   touch $stamp
+   touch /root/2.log
+
+   \# Bring up networking temporarily and get and upgrade any RPMs we need
+   if ! dhclient eth0 > /root/veryfirst.log; then echo "dhclient failed" >> /root/veryfirst.log; fi
+   touch /root/3.log
+
+   hostname=`xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=name-label`
+   touch /root/4.log
+   /opt/xensource/libexec/set-hostname $hostname
+   touch /root/5.log
 
    for i in `xe -s ${host} -u ${username} -pw ${password} vm-param-get uuid=$host param-name=other-config param-key=rpm-blobs | sed s/,/\ /g`
    do
        curl -o /tmp/$i.rpm http://${host}/blob?uuid=$i
    done
+   touch /root/7.log
    xe -s ${host} -u ${username} -pw ${password} vm-param-set uuid=$host other-config:rpm-blobs=
+   touch /root/8.log
 
    killall -9 dhclient
+   touch /root/9.log
    ifconfig eth0 0.0.0.0 down
+   touch /root/10.log
 
    rpm -Uvh --force --nodeps /tmp/*.rpm &> /tmp/install.log
 fi
