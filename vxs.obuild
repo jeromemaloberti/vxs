@@ -16,3 +16,9 @@ Executable            vxs
   MainIs:             vxs.ml
   pp: camlp4o
   BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt, cmdliner
+
+Executable            perftest
+  Path:               .
+  MainIs:             perftest.ml
+  pp: camlp4o
+  BuildDepends:       xsops, lwt, lwt.syntax, cohttp, cohttp.lwt, xen-api-client, xen-api-client.lwt
