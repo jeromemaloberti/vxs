@@ -161,13 +161,13 @@ let template_clone copts branch iso template_name uuid new_name =
   in
   Lwt_main.run (aux ())
 
-let template_install copts source nofakev6d =
+let template_install copts source nofakev6d disk mem =
   let host_config = config copts in
   let branch = match source with 
     | Xs_ops.Pxe branch -> branch 
     | Xs_ops.Mainiso _ -> "trunk-ring3" in
   let aux () =
-    lwt vm_uuid = Xs_ops.create_xenserver_template host_config source in
+    lwt vm_uuid = Xs_ops.create_xenserver_template host_config source disk mem in
     Printf.printf "%s\n" vm_uuid;
     let nofakev6d = match branch with
       | "trunk-ring3" | "clearwater" | "clearwater-ring3" -> true
@@ -181,13 +181,13 @@ let template_install copts source nofakev6d =
   in
   Lwt_main.run (aux ())
 
-let template_create_cli copts branch iso nofakev6d =
+let template_create_cli copts branch iso nofakev6d disk mem =
   match iso with
-  | Some file -> template_install copts (Xs_ops.Mainiso file) nofakev6d
+  | Some file -> template_install copts (Xs_ops.Mainiso file) nofakev6d disk mem
   | None -> 
     match branch with 
-    | Some branch -> template_install copts (Xs_ops.Pxe branch) nofakev6d
-    | None -> template_install copts (Xs_ops.Pxe "trunk-ring3") nofakev6d
+    | Some branch -> template_install copts (Xs_ops.Pxe branch) nofakev6d disk mem
+    | None -> template_install copts (Xs_ops.Pxe "trunk-ring3") nofakev6d disk mem
 
 let template_list copts branch iso latest minimal =
   let aux () =
@@ -240,7 +240,7 @@ let install_centos6 copts name =
   in
   Lwt_main.run (aux ())
 
-let install_mirage copts name kernel n_vms =
+let install_mirage copts name kernel n_vms memory =
   match kernel with
   | None ->
     Printf.printf "You need to specify a kernel!\n";
@@ -248,18 +248,18 @@ let install_mirage copts name kernel n_vms =
   | Some k ->
     let aux () =
       let host_config = config copts in
-      lwt rc = Xs_ops.install_mirage host_config name k n_vms in
-      exit rc
+      lwt vms = Xs_ops.install_mirage host_config name k n_vms memory in
+      exit (if ((List.length vms) = n_vms) then 0 else 1)
     in
     Lwt_main.run (aux ())
 
-let vm_install copts command name kernel n_vms =
+let vm_install copts command name kernel n_vms memory =
   Printf.printf "vm-install name:%s\n" name;
   match command with
   | `debian -> install_debian copts name
   | `centos5 -> install_centos5 copts name
   | `centos6 -> install_centos6 copts name
-  | `mirage -> install_mirage copts name kernel n_vms
+  | `mirage -> install_mirage copts name kernel n_vms memory
   | _ -> Printf.printf "Wrong parameters\n";
     ()
 
@@ -404,12 +404,16 @@ let vm_install_cmd =
     let doc = "Number of Mirage VMs to install." in
     Cli.Arg.(value & opt int 1 & info ["s"] ~docs ~doc ~docv:"NVMS")
   in
+  let memory =
+    let doc = "Memory setup of Mirage VMs in Mb." in
+    Cli.Arg.(value & opt int64 24L & info ["m"] ~docs ~doc ~docv:"MEMORY")
+  in
   let kernel =
     let doc = "Mirage kernel to upload." in
     Cli.Arg.(value & opt (some non_dir_file) None & info ["k"; "kernel"] ~docs ~doc ~docv:"KERNEL")
   in
   let doc = "Commands to install VMs" in
-  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel $ n_hosts),
+  Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel $ n_hosts $ memory),
   Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
 
 let test_cmd =
@@ -526,12 +530,21 @@ let template_create_cmd =
     let doc = "Do not install the fake v6d." in
     Cli.Arg.(value & flag & info ["n"; "nofakev6d"] ~doc)
   in
+  let disk =
+    let doc = "Disk size in Gb." in
+    Cli.Arg.(value & opt int64 40L & info ["d"] ~doc ~docv:"DISK")
+  in
+  let memory =
+    let doc = "Memory size in Mb." in
+    Cli.Arg.(value & opt int64 2048L & info ["m"] ~doc ~docv:"MEM")
+  in
   let doc = "Create a Virtual Xen Server Template" in
   let man = [
     `S "DESCRIPTION";
     `P "Install a Virtual Xen Server as a Template"] @ help_secs
   in
-  Cli.Term.(pure template_create_cli $ common_opts_t $ branch $ iso $ nov6d),
+  Cli.Term.(pure template_create_cli $ common_opts_t $ branch $ iso $
+      nov6d $ disk $ memory),
   Cli.Term.info "template-create" ~sdocs:common_opts_sect ~doc ~man
     
 let template_list_cmd =

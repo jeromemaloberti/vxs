@@ -95,6 +95,7 @@ let get_response host_config session_id uuid n =
     lwt results = Lwt_list.map_s (fun ev -> 
       Lwt.return (match Event_helper.record_of_event ev with
       | Event_helper.VM (_ref,Some record) -> 
+	  (String.concat "," (List.map (fun (x,y) -> x ^ "=" ^ y) record.API.vM_other_config));
 	if List.mem_assoc response record.API.vM_other_config 
 	then Some (List.assoc response record.API.vM_other_config)
 	else None
@@ -323,6 +324,7 @@ let is_vxs_template rpc session_id template_ref =
   if not is_t then Lwt.fail (Failure "Not a template") else Lwt.return ()
 
 let template_uninstall rpc session_id t_ref =
+  Printf.printf "template_uninstall %s\n%!" t_ref;
   lwt vbds = X.VM.get_VBDs ~rpc ~session_id ~self:t_ref in
   lwt vdis = Lwt_list.fold_left_s 
     (fun acc vbd -> try
@@ -330,7 +332,7 @@ let template_uninstall rpc session_id t_ref =
 		      lwt other_config = X.VBD.get_other_config rpc session_id vbd in
 		      lwt vdi = X.VBD.get_VDI rpc session_id vbd in
 			(* Double-check the VDI actually exists *)
-		      ignore(X.VDI.get_uuid rpc session_id vdi);
+		      (* ignore(X.VDI.get_uuid rpc session_id vdi); *)
 		      if List.mem_assoc "owner" other_config
 		      then Lwt.return (vdi :: acc) else Lwt.return acc
       with _ -> Lwt.return acc) [] vbds in
@@ -408,7 +410,7 @@ let create_disk ~rpc ~session_id name size vm =
   lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
   Lwt.return vdi
 
-let create_xenserver_template host ty =
+let create_xenserver_template host ty disk mem =
   lwt () = match ty with | Pxe _ -> check_pxe_dir () | _ -> Lwt.return () in
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     lwt templates = X.VM.get_all_records_where ~rpc ~session_id ~expr:"field \"name__label\" = \"Other install media\"" in
@@ -417,14 +419,16 @@ let create_xenserver_template host ty =
     lwt vm = X.VM.clone ~rpc ~session_id ~vm:template ~new_name:"xenserver-unknown" in
     lwt vm_uuid = X.VM.get_uuid ~rpc ~session_id ~self:vm in
     lwt () = X.VM.provision ~rpc ~session_id ~vm in
-    lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:g2 ~static_max:g2 ~dynamic_min:g2 ~dynamic_max:g2 in
+    let mem_size = Int64.mul mem meg in
+    lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:mem_size ~static_max:mem_size ~dynamic_min:mem_size ~dynamic_max:mem_size in
     lwt vif = create_vif ~rpc ~session_id vm in
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
     lwt servertime = X.Host.get_servertime ~rpc ~session_id ~host:master in
     lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
-    lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Root disk" ~name_description:"" ~virtual_size:g40 ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
+    let disk_size = Int64.mul disk gig in
+    lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Root disk" ~name_description:"" ~virtual_size:disk_size ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
     lwt vbd = X.VBD.create ~rpc ~session_id ~vDI:vdi ~vM:vm ~userdevice:"0" ~bootable:true ~mode:`RW ~_type:`Disk ~unpluggable:false ~empty:false ~other_config:["owner",""] ~qos_algorithm_type:"" ~qos_algorithm_params:[] in
     ignore(vbd);
     lwt answerfile = Blob.add_blob rpc session_id vm "answerfile" in
@@ -549,7 +553,7 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     let starttime = Unix.gettimeofday () in
     lwt templates = get_xenserver_templates rpc session_id in
     lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
-    lwt (master::slaves) = Lwt_list.map_p (fun (suffix:string) ->
+    lwt (master::slaves) = Lwt_list.map_s (fun (suffix:string) ->
       lwt (vm,u) = install_from_vxs_template rpc session_id t.vxs_r (Printf.sprintf "%s-%s" pool_name suffix) in
       lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
       Lwt.return (vm,u))
@@ -569,11 +573,13 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     let vms = master::slaves in
     lwt ips = Lwt_list.map_s wait_for_ip vms in
     Printf.printf "IPs %s\n%!" (String.concat " " ips);
+    Printf.printf "Waiting 30s...\n%!";
+    lwt () = Lwt_unix.sleep 30.0 in
     lwt rpcs = Lwt_list.map_s (fun (r,u) -> lwt n = submit_rpc host
     session_id u (Printf.sprintf "#!/bin/bash\nshutdown -h 0\n") in Lwt.return (u,n)) vms in
     lwt responses = Lwt_list.map_s (fun (u,n) -> get_response host session_id u n) rpcs in
     List.iter (fun (rc,out,err) -> Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err) responses;
-    Printf.printf "Waiting ...\n%!";
+    Printf.printf "Waiting 60s...\n%!";
     lwt () = Lwt_unix.sleep 60.0 in
     Printf.printf "Restarting VMs\n%!";
     lwt () = Lwt_list.iter_s (fun (vm,_) -> X.VM.start ~rpc
@@ -779,13 +785,14 @@ let print_time () =
   let t = Unix.gmtime (Unix.gettimeofday ()) in
   Printf.printf "%02d:%02d:%02d%!\n" t.Unix.tm_hour t.Unix.tm_min t.Unix.tm_sec
 
-let install_mirage' rpc session_id host template_ref default_sr contents name =
+let install_mirage' rpc session_id host template_ref default_sr contents memory name =
   lwt (vm,vm_uuid) = install_from_template rpc session_id template_ref name in
   lwt vdi = create_disk ~rpc ~session_id "Autoinstall disk" m5 vm in
   lwt () = Utils.put_disk host session_id vdi contents in
   lwt () = X.VM.set_PV_bootloader ~rpc ~session_id ~self:vm ~value:"pygrub" in
   lwt () = X.VM.set_HVM_boot_policy ~rpc ~session_id ~self:vm ~value:"" in
-  lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:m24 ~static_max:m24 ~dynamic_min:m24 ~dynamic_max:m24 in
+  let mem = Int64.mul meg memory in 
+  lwt () = X.VM.set_memory_limits ~rpc ~session_id ~self:vm ~static_min:mem ~static_max:mem ~dynamic_min:mem ~dynamic_max:mem in
   lwt boot_params = X.VM.get_HVM_boot_params ~rpc ~session_id ~self:vm in
   lwt () = Lwt_list.iter_s (fun (k,v) -> X.VM.remove_from_HVM_boot_params ~rpc ~session_id ~self:vm
     ~key:k) boot_params in
@@ -801,7 +808,21 @@ let generate_names name n =
 	 in
 	 List.rev(aux [] n)
 
-let install_mirage host name kernel n_vms =
+let split list n =
+  let rec aux i acc = function
+    | [] -> List.rev acc, []
+    | h :: t as l -> if i = 0 then List.rev acc, l
+      else aux (i-1) (h :: acc) t  in
+  aux n [] list
+
+let break list n =
+  let rec aux acc = function
+    | [] -> List.rev acc
+    | l -> let (h,t) = split l n in
+	   aux (h :: acc) t in
+  aux [] list
+
+let install_mirage host name kernel n_vms memory =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt () = create_mirage_image kernel in
     lwt server_ip = get_server_ip ~rpc ~session_id host in
@@ -815,8 +836,14 @@ let install_mirage host name kernel n_vms =
 
     let names = generate_names name n_vms in
     lwt vm = install_mirage' rpc session_id host template_ref
-    default_sr contents (List.hd names) in
-    lwt () = Lwt_list.iter_s (fun name -> lwt new_vm = X.VM.clone ~rpc
-    ~session_id ~vm ~new_name:name in Lwt.return ())  (List.tl names) in
-    Lwt.return 0
+    default_sr contents memory (List.hd names) in
+    let name_lists = break (List.tl names) 25 in (* clone 25 VMs at a time *)
+    lwt vms_lists = Lwt_list.map_s (fun names ->      
+      lwt vms = Lwt_list.map_p (fun name -> 
+	lwt new_vm = X.VM.clone ~rpc ~session_id ~vm ~new_name:name in 
+  (*    lwt () = X.VM.start ~rpc ~session_id ~vm:new_vm ~start_paused:false ~force:false in *)
+	Lwt.return new_vm) names in
+      Lwt.return vms) 
+      name_lists in
+    Lwt.return (vm :: (List.concat vms_lists))
   )
