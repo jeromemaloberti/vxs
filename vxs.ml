@@ -108,8 +108,16 @@ let get_template_uuid copts branch iso name uuid =
   | None -> 
     let templates = get_all_templates copts branch iso name in
     if (List.length templates) <> 1 then
-      begin 
-	Printf.printf "There are more than one or zero template matching your request.-\n";
+      begin
+        Printf.printf "I expected exactly one template to match your request.\n";
+        if List.length templates = 0 then begin
+          Printf.printf "No templates matched the query.\n";
+        end else begin
+          Printf.printf "I found the following templates:\n";
+          List.iter (fun x ->
+            Printf.printf "* %s %s installed at %s\n" x.Xs_ops.vxs_uuid x.Xs_ops.vxs_name x.Xs_ops.vxs_install_time;
+          ) templates;
+        end;
 	exit 1
       end;
     let ret = (List.hd templates).Xs_ops.vxs_uuid in
