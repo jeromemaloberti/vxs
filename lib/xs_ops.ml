@@ -398,8 +398,12 @@ let install_vxs host template new_name =
     install_from_vxs_template rpc session_id vm new_name)
     
 let create_vif ~rpc ~session_id vm =
-  lwt nets = X.Network.get_all_records_where ~rpc ~session_id ~expr:"field \"bridge\" = \"xenbr0\"" in
-  let (network,_) = List.hd nets in
+  lwt pools = X.Pool.get_all ~rpc ~session_id in
+  let pool = List.hd pools in
+  lwt master = X.Pool.get_master ~self:pool ~rpc ~session_id in
+  lwt pifs = X.PIF.get_all_records_where ~rpc ~session_id ~expr:(Printf.sprintf "(field \"management\" = \"true\") and (field \"host\" = \"%s\")" master) in
+  let pif = fst (List.hd pifs) in
+  lwt network = X.PIF.get_network ~rpc ~session_id ~self:pif in
   X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[]
 
 let create_disk ~rpc ~session_id name size vm =
