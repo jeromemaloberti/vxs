@@ -270,6 +270,9 @@ let update_vxs_template_cache ~rpc ~session_id =
   lwt () = X.Pool.add_to_other_config ~rpc ~session_id ~self:p ~key:"vxs_template_cache" ~value:(Jsonrpc.to_string (rpc_of_vxs_templates vxs_templates)) in
   Lwt.return ()
 
+let regenerate_template_cache host =
+  with_rpc_and_session host (fun ~rpc ~session_id -> update_vxs_template_cache ~rpc ~session_id)
+
 let add_rpms' ~rpc ~session_id host uuid rpms =
   let key = "rpm-blobs" in
   lwt vm_ref = X.VM.get_by_uuid rpc session_id uuid in

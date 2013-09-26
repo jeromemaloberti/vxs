@@ -158,6 +158,15 @@ let template_destroy copts branch iso template_name uuid =
   in
   Lwt_main.run (aux ())
 
+let template_cache copts =
+  Printf.printf "template_cache_regenerate\n";
+  let host = config copts in
+  let aux () =
+    lwt () = Xs_ops.regenerate_template_cache host in
+    return ()
+  in
+  Lwt_main.run (aux ())
+
 let template_clone copts branch iso template_name uuid new_name =
   Printf.printf "template_clone\n";
   let template_uuid = get_template_uuid copts branch iso template_name uuid in
@@ -531,6 +540,16 @@ let template_clone_cmd =
   Cli.Term.(pure template_clone $ common_opts_t $ branch $ iso $ template_name $ uuid $ new_name),
   Cli.Term.info "template-clone" ~sdocs:common_opts_sect ~doc ~man
 
+let template_cache_cmd =
+  let docs = common_opts_sect in
+  let doc = "Regenerate the template cache." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Regenerate the template cache."] @ help_secs
+  in
+  Cli.Term.(pure template_cache $ common_opts_t),
+  Cli.Term.info "template-cache-regen" ~sdocs:common_opts_sect ~doc ~man
+
 let template_create_cmd =
   let branch = branch_opt () in
   let iso = iso_opt () in
@@ -618,7 +637,8 @@ let default_cmd =
 
 
 let cmds = [ vm_install_cmd; test_cmd; pool_install_cmd; template_clone_cmd; template_create_cmd; 
-	     template_destroy_cmd; template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd ]
+	     template_destroy_cmd; template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd;
+	     template_cache_cmd ]
 
 let () = 
   Printexc.record_backtrace true;
