@@ -26,6 +26,7 @@ open CamlTemplate.Model
 type installty = 
 | Pxe of string (* branch name *)
 | Mainiso of string (* iso name *)
+| Cloudstack
 | Custom (* once a VXS template has been changed *)
 	    
 with rpc
@@ -399,12 +400,15 @@ let install_vxs host template new_name =
   with_rpc_and_session host (fun ~rpc ~session_id -> 
     lwt (vm,uuid) = get_by_uuid_or_by_name rpc session_id template in
     install_from_vxs_template rpc session_id vm new_name)
+
+let create_vif_on_net ~rpc ~session_id vm network device ?(mAC="") () =
+  X.VIF.create ~rpc ~session_id ~device ~network ~vM:vm ~mAC ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[]
     
-let create_vif ~rpc ~session_id host vm =
+let create_mgmt_vif ~rpc ~session_id host vm =
   lwt pifs = X.PIF.get_all_records_where ~rpc ~session_id ~expr:("field \"management\" = \"true\" and field \"host\" = \"" ^ (API.Ref.string_of host) ^ "\"") in
   let (_, pif_rec) = List.hd pifs in
   let network = pif_rec.API.pIF_network in
-  X.VIF.create ~rpc ~session_id ~device:"0" ~network ~vM:vm ~mAC:"" ~mTU:1500L ~other_config:[] ~qos_algorithm_type:"" ~qos_algorithm_params:[] ~locking_mode:`unlocked ~ipv4_allowed:[] ~ipv6_allowed:[]
+  create_vif_on_net ~rpc ~session_id vm network "0" ()
 
 let create_disk ~rpc ~session_id name size vm =
   lwt pools = X.Pool.get_all ~rpc ~session_id in
@@ -429,7 +433,7 @@ let create_xenserver_template host ty disk mem =
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
     lwt servertime = X.Host.get_servertime ~rpc ~session_id ~host:master in
-    lwt vif = create_vif ~rpc ~session_id master vm in
+    lwt vif = create_mgmt_vif ~rpc ~session_id master vm in
     lwt default_sr = X.Pool.get_default_SR ~rpc ~session_id ~self:pool in
     let disk_size = Int64.mul disk gig in
     lwt vdi = X.VDI.create ~rpc ~session_id ~sR:default_sr ~name_label:"Root disk" ~name_description:"" ~virtual_size:disk_size ~_type:`user ~sharable:false ~read_only:false ~other_config:[] ~xenstore_data:[] ~sm_config:[] ~tags:[] in 
@@ -538,10 +542,6 @@ let suffix_list_init ?(master_suffix="m") ?(slave_suffix="s") n =
       | n -> (Printf.sprintf "%s%d" slave_suffix (n-1)) :: (inner (n-1))) in
   List.rev (inner n)
 
-let rec diff_list l1 l2 = match l1,l2 with [],[] -> true
-  | hd1::tl1,hd2::tl2 -> if hd1 = hd2 then false else diff_list tl1 tl2
-  | _,_ -> true
-
 let create_vm' ~rpc ~session_id template vm_name =
   lwt templates = get_xenserver_templates rpc session_id in
   lwt t = try Lwt.return (List.find (fun x -> x.vxs_uuid = template) templates) with _ -> fail (Unknown_template template) in
@@ -576,32 +576,6 @@ let create_pool host template pool_name nhosts nfs_server nfs_path =
     let starttime = Unix.gettimeofday () in
     let vms = master::slaves in
     lwt ips = Lwt_list.map_s wait_for_ip vms in
-    Printf.printf "IPs %s\n%!" (String.concat " " ips);
-    Printf.printf "Waiting 30s...\n%!";
-    lwt () = Lwt_unix.sleep 30.0 in
-    lwt rpcs = Lwt_list.map_s (fun (r,u) -> lwt n = submit_rpc host
-    session_id u (Printf.sprintf "#!/bin/bash\nshutdown -h 0\n") in Lwt.return (u,n)) vms in
-    lwt responses = Lwt_list.map_s (fun (u,n) -> get_response host session_id u n) rpcs in
-    List.iter (fun (rc,out,err) -> Printf.printf "rc: %d\nout: %s\nerr: %s\n%!" rc out err) responses;
-    Printf.printf "Waiting 60s...\n%!";
-    lwt () = Lwt_unix.sleep 60.0 in
-    Printf.printf "Restarting VMs\n%!";
-    lwt () = Lwt_list.iter_s (fun (vm,_) -> X.VM.start ~rpc
-    ~session_id ~vm  ~start_paused:false ~force:false) vms in
-    let rec wait_until_new_IPs ips =
-      lwt () = Lwt_unix.sleep 5.0 in
-      lwt ips' = Lwt_list.map_s (fun (vm,_) ->
-	lwt oc = X.VM.get_other_config ~rpc ~session_id ~self:vm in
-	let ip = List.assoc "vxs_ip" oc in
-	Lwt.return ip) vms in
-      Printf.printf "IPs' %s\n%!" (String.concat " " ips');
-      if diff_list ips' ips then
-	Lwt.return ips'
-      else
-	wait_until_new_IPs ips
-    in
-    Printf.printf "Waiting new IPs\n%!";
-    lwt ips = wait_until_new_IPs ips in
     Printf.printf "IPs %s\n%!" (String.concat " " ips);
     let endtime = Unix.gettimeofday () in
     let master_ip = List.hd ips in
@@ -708,7 +682,7 @@ let install_wheezy host name =
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
-    lwt _ = create_vif ~rpc ~session_id master vm in
+    lwt _ = create_mgmt_vif ~rpc ~session_id master vm in
     lwt id_rsa = Blob.add_blob rpc session_id vm "id_dsa" in
     lwt () = copy_dsa host session_id id_rsa in
     let post_install_tmpl = get_template Template.debian_postinstall_tmpl [
@@ -728,7 +702,7 @@ let install_wheezy host name =
       ~value:"wheezy" in
     let pv_val = Printf.sprintf "auto-install/enable=true url=http://%s/blob?uuid=%s interface=auto netcfg/dhcp_timeout=600 hostname=%s domain=uk.xensource.com" server_ip debian_preseed.Blob.u name in
     lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
-    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    (*lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in*)
     Lwt.return 0
   )
 
@@ -743,7 +717,7 @@ let install_centos57 host name =
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
-    lwt _ = create_vif ~rpc ~session_id master vm in
+    lwt _ = create_mgmt_vif ~rpc ~session_id master vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
       ~value:"http://www.uk.xensource.com/distros/CentOS/5.7/os/i386" in
     lwt centos57 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos57_tmpl in
@@ -753,7 +727,7 @@ let install_centos57 host name =
     Lwt.return 0
   )
 
-let install_centos64 host name =
+let install_centos65_ks host name ks =
   with_rpc_and_session host (fun ~rpc ~session_id ->
     lwt server_ip = get_server_ip ~rpc ~session_id host in
     lwt [(template_ref,_)] = X.VM.get_all_records_where ~rpc ~session_id
@@ -764,17 +738,85 @@ let install_centos64 host name =
     lwt pools = X.Pool.get_all ~rpc ~session_id in
     let pool = List.hd pools in
     lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
-    lwt _ = create_vif ~rpc ~session_id master vm in
+    lwt _ = create_mgmt_vif ~rpc ~session_id master vm in
     lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"install-repository"
-      ~value:"http://www.mirrorservice.org/sites/mirror.centos.org/6.4/os/x86_64/" in
-    lwt centos64 = Blob.add_blob_with_content host rpc session_id vm "ks" Template.centos64_tmpl in
-    let pv_val = Printf.sprintf "ks=http://%s/blob?uuid=%s ksdevice=eth0" server_ip centos64.Blob.u in
+      ~value:"http://www.mirrorservice.org/sites/mirror.centos.org/6.5/os/x86_64/" in
+    lwt centos65 = Blob.add_blob_with_content host rpc session_id vm "ks" ks in
+    let pv_val = Printf.sprintf "ks=http://%s/blob?uuid=%s ksdevice=eth0" server_ip centos65.Blob.u in
     lwt () = X.VM.set_PV_args ~rpc ~session_id ~self:vm ~value:pv_val in
     lwt () = vm_cd_add ~rpc ~session_id vm "xs-tools.iso" "3" in
-    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
-    Lwt.return 0
+    lwt uuid = X.VM.get_uuid ~rpc ~session_id ~self:vm in
+    Lwt.return (vm,uuid)
   )
 
+let install_centos65 host name =
+  lwt (vm,uuid) = install_centos65_ks host name Template.centos64_tmpl in
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    Lwt.return uuid)
+
+
+let install_cloudstack_template host name =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    lwt networks = X.Network.get_all ~rpc ~session_id in
+    lwt nets = Lwt_list.filter_s (fun net -> 
+      lwt bridge = X.Network.get_bridge ~rpc ~session_id ~self:net in
+      Lwt.return (bridge = "xapi1")) networks in
+    lwt net = 
+      if List.length nets = 0 
+      then X.Network.create ~rpc ~session_id ~name_label:"internal" ~name_description:"Cloudstack internal network" ~mTU:1500L ~other_config:[] ~tags:[]
+      else Lwt.return (List.hd nets)
+    in
+    lwt server_ip = get_server_ip ~rpc ~session_id host in
+    Printf.printf "About to create centos65 vm\n%!";
+    lwt (vm,centos_vm) = install_centos65_ks host name Template.cloudstack_mgmt in
+    Printf.printf "About to create vif\n%!";
+    lwt _ = create_vif_on_net ~rpc ~session_id vm net "1" () in
+    lwt pools = X.Pool.get_all ~rpc ~session_id in
+    let pool = List.hd pools in
+    lwt master = X.Pool.get_master ~rpc ~session_id  ~self:pool in
+    lwt servertime = X.Host.get_servertime ~rpc ~session_id ~host:master in
+    lwt () = X.VM.start ~rpc ~session_id ~vm ~start_paused:false ~force:false in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_install_time" ~value:servertime in
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_ty" ~value:(string_of_installty Cloudstack) in 
+    lwt () = X.VM.add_to_other_config ~rpc ~session_id ~self:vm ~key:"vxs_template" ~value:"true" in 
+
+    lwt () = wait rpc session_id [Printf.sprintf "vm/%s" vm] (function 
+      | Event_helper.VM (_,Some r) ->
+	r.API.vM_power_state = `Halted
+      | _ -> false) in
+
+    lwt () = X.VM.set_is_a_template ~rpc ~session_id ~self:vm ~value:true in
+    lwt () = update_vxs_template_cache ~rpc ~session_id in
+    return centos_vm)
+
+
+let install_cloudstack host cs_template_uuid vxs_template_uuid =
+  with_rpc_and_session host (fun ~rpc ~session_id ->
+    Printf.printf "Getting template\n%!";
+
+    lwt templates = get_xenserver_templates rpc session_id in
+    lwt vxs_t = try Lwt.return (List.find (fun x -> x.vxs_uuid = vxs_template_uuid) templates) with _ -> fail (Unknown_template vxs_template_uuid) in
+    lwt cs_t = try Lwt.return (List.find (fun x -> x.vxs_uuid = cs_template_uuid) templates) with _ -> fail (Unknown_template vxs_template_uuid) in
+
+    lwt networks = X.Network.get_all ~rpc ~session_id in
+    lwt nets = Lwt_list.filter_s (fun net -> 
+      lwt bridge = X.Network.get_bridge ~rpc ~session_id ~self:net in
+      Lwt.return (bridge = "xapi1")) networks in
+    let net = List.hd nets in
+    Printf.printf "Creating VXS vm\n%!";
+    lwt (vm,u) = install_from_vxs_template rpc session_id vxs_t.vxs_r "vxs1" in
+    lwt vifs = X.VM.get_VIFs ~rpc ~session_id ~self:vm in
+    lwt _ = Lwt_list.iter_s (fun vif -> X.VIF.destroy ~rpc ~session_id ~self:vif) vifs in
+    Printf.printf "Creating VIF for VXS vm\n%!";
+    lwt vif = create_vif_on_net ~rpc ~session_id vm net "0" ~mAC:"02:00:00:00:00:01" () in
+
+    lwt (cs_vm,cs_u) = install_from_vxs_template rpc session_id cs_t.vxs_r "cs1" in
+    lwt () = X.VM.start ~rpc ~session_id ~vm:cs_vm ~start_paused:false ~force:false in
+    lwt () = X.VM.start ~rpc ~session_id ~vm:vm ~start_paused:false ~force:false in
+
+    return ())
+    
 let create_mirage_image kernel =
   let fname = "/tmp/mirage.img" in
   let mnt_path = "/mnt/mirage" in
