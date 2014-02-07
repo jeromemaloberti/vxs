@@ -51,7 +51,7 @@ let mk_subdoc ?(names="COMMANDS") commands =
       let bold s = Printf.sprintf "$(b,%s)" s in
     let cmds = String.concat ", " (List.map bold cs) in
     `I (cmds, d)
-    ) commands
+   ) commands
     
 let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
   let command =
@@ -77,18 +77,24 @@ let mk_subcommands_aux ?(name="COMMAND") my_enum commands default initial_pos =
 let mk_subcommands ?name commands initial_pos =
   mk_subcommands_aux ?name Cli.Arg.enum commands None initial_pos
 
-let get_all_templates copts branch iso name =
-  if branch = None && iso = None && name = None then
+let get_all_templates copts branch iso name cs_name =
+  if branch = None && iso = None && name = None && cs_name = None then
     []
   else begin
     let aux () =
       let host_config = config copts in
+      Printf.printf "About to get templates\n%!";
       lwt templates = Xs_ops.get_xenserver_templates_main host_config in
       let open Xs_ops in
       return (List.filter (fun t ->
-	(match name with
-	| Some n -> t.vxs_name = n
-	| None -> true) &&
+	(match cs_name with
+	| Some n -> 
+	  Printf.printf "Checking: %s vs %s\n%!" t.vxs_name n;
+	  t.vxs_name = n && t.vxs_ty = Cloudstack
+	| None -> true) && 
+	  (match name with
+	  | Some n -> t.vxs_name = n
+	  | None -> true) &&
 	  (match branch with
 	  | Some b -> (match t.vxs_ty with Pxe b' -> b = b' | _ -> false)
 	  | None -> true) &&
@@ -106,7 +112,7 @@ let get_template_uuid copts branch iso name uuid =
   match uuid with
   | Some uuid -> uuid
   | None -> 
-    let templates = get_all_templates copts branch iso name in
+    let templates = get_all_templates copts branch iso name None in
     if (List.length templates) <> 1 then
       begin
         Printf.printf "I expected exactly one template to match your request.\n";
@@ -123,7 +129,18 @@ let get_template_uuid copts branch iso name uuid =
     let ret = (List.hd templates).Xs_ops.vxs_uuid in
     Printf.printf "Template uuid:%s\n" ret;
     ret
-      
+
+let get_cs_uuid copts cs_name =
+  Printf.printf "In get_cs_uuid\n%!";
+  let templates = get_all_templates copts None None None cs_name in
+  if (List.length templates) <> 1 then
+    begin
+      Printf.printf "Expecting 1 template: got %d.\n%! (cs_name=%s)" (List.length templates) 
+      (match cs_name with Some x -> x | None -> "(none)");
+      exit 1
+    end
+  else (List.hd templates).Xs_ops.vxs_uuid
+
 let pool_create copts nhosts nfs_server nfs_path branch iso template_name uuid pool_name rpms =
   Printf.printf "pool_create nhost %d nfs_server %s nfs_path %s branch %s iso %s template %s uuid %s pool %s\n"
     nhosts (opt_str nfs_server) (opt_str nfs_path) (opt_str branch) (opt_str iso) (opt_str template_name) (opt_str uuid) 
@@ -252,9 +269,27 @@ let install_centos5 copts name =
 let install_centos6 copts name =
   let aux () =
     let host_config = config copts in
-    lwt rc = Xs_ops.install_centos64 host_config name in
-    exit rc
+    lwt _ = Xs_ops.install_centos65 host_config name in
+    exit 0
   in
+  Lwt_main.run (aux ())
+
+let install_cloudstack_template copts =
+  let aux () =
+    let host_config = config copts in
+    lwt _ = Xs_ops.install_cloudstack_template host_config "cs" in
+    exit 0
+  in
+  Lwt_main.run (aux ())
+
+let install_cloudstack copts branch iso template_name uuid cs_name =
+  let aux () =
+    let host_config = config copts in
+    let vxs_template_uuid = get_template_uuid copts branch iso template_name uuid in
+    let cs_template_uuid = get_cs_uuid copts cs_name in
+    lwt _ = Xs_ops.install_cloudstack host_config cs_template_uuid vxs_template_uuid in
+    exit 0
+  in 
   Lwt_main.run (aux ())
 
 let install_mirage copts name kernel n_vms memory =
@@ -369,15 +404,15 @@ let common_opts_t =
   let docs = common_opts_sect in
   let host =
     let doc = "Hostname to connect to." in
-    Cli.Arg.(value & opt (some string) None & info ["h"; "host"] ~docs ~doc ~docv:"HOST")
+    Cli.Arg.(value & opt (some string) None & info ["H"; "host"] ~docs ~doc ~docv:"HOST")
   in
   let user =
     let doc = "Username to log in with." in
-    Cli.Arg.(value & opt (some string) (Some "root") & info ["u"; "user"] ~docs ~doc)
+    Cli.Arg.(value & opt (some string) (Some "root") & info ["U"; "user"] ~docs ~doc)
   in
   let pw =
     let doc = "Password to log in with." in
-    Cli.Arg.(value & opt (some string) (Some "xenroot") & info ["p"; "password"] ~docs ~doc)
+    Cli.Arg.(value & opt (some string) (Some "xenroot") & info ["P"; "password"] ~docs ~doc)
   in
   Cli.Term.(pure common_opts $ host $ user $ pw)
 
@@ -399,6 +434,10 @@ let template_name_opt () =
 let uuid_opt () =
   let doc = "UUID of the template." in
   Cli.Arg.(value & opt (some string) None & info ["U"; "uuid"] ~doc ~docv:"UUID")
+
+let cs_name_opt () =
+  let doc = "Name of the CS template." in
+  Cli.Arg.(value & opt (some string) None & info ["cs"] ~doc ~docv:"CS_NAME")
 
 (* Commands *)
 let vm_install_cmd =
@@ -429,7 +468,7 @@ let vm_install_cmd =
     let doc = "Mirage kernel to upload." in
     Cli.Arg.(value & opt (some non_dir_file) None & info ["k"; "kernel"] ~docs ~doc ~docv:"KERNEL")
   in
-  let doc = "Commands to install VMs" in
+  let doc = "Install a XenServer 6.x VM from a VXS template" in
   Cli.Term.(pure vm_install $ common_opts_t $ command $ vm_name $ kernel $ n_hosts $ memory),
   Cli.Term.info "vm-install" ~sdocs:common_opts_sect ~doc ~man
 
@@ -451,7 +490,7 @@ let test_cmd =
     let doc = "RPM files to copy to the VM." in
     Cli.Arg.(non_empty & pos_right 0 non_dir_file [] & info [] ~docv:"RPMS" ~doc ~docs)
   in
-  let doc = "Copy and install RPM files in a VM." in
+  let doc = "Run quicktest inside a XenServer 6.x VM." in
   Cli.Term.(pure test $ common_opts_t $ command $ branch $ rpms),
   Cli.Term.info "test" ~sdocs:common_opts_sect ~doc ~man
 
@@ -507,6 +546,34 @@ let pool_install_cmd =
   Cli.Term.(pure pool_create $ common_opts_t $ n_hosts $ nfs_server $ nfs_path $ branch $ iso $ 
 	      template_name $ uuid $ pool_name $ rpms),
   Cli.Term.info "install" ~sdocs:common_opts_sect ~doc ~man
+
+
+let cloudstack_install_cmd =
+  let docs = common_opts_sect in
+  let branch = branch_opt () in
+  let iso = iso_opt () in
+  let template_name = template_name_opt () in
+  let uuid = uuid_opt () in
+  let cs_name = cs_name_opt () in
+  let doc = "Install a cloudstack (requires both a cloudstack management template and a xenserver template)." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Install a virtual cloudstack on a host."] @ help_secs
+  in
+  Cli.Term.(pure install_cloudstack $ common_opts_t $ branch $ iso $ 
+	      template_name $ uuid $ cs_name),
+  Cli.Term.info "cs-install" ~sdocs:common_opts_sect ~doc ~man
+
+let cloudstack_template_create_cmd =
+  let docs = common_opts_sect in
+  let doc = "Create a cloudstack template." in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Create a cloudstack management server template on a host.";
+  `P "This includes a DHCP server that will listen on eth1, serving 192.168.1.x addresses to 02:00:00:00:00:0x"] @ help_secs
+  in
+  Cli.Term.(pure install_cloudstack_template $ common_opts_t),
+  Cli.Term.info "cs-template-create" ~sdocs:common_opts_sect ~doc ~man
 
 let template_destroy_cmd =
   let docs = common_opts_sect in
@@ -607,7 +674,7 @@ let exec_cmd =
     let doc = "Do not wait for the execution." in
     Cli.Arg.(value & flag & info ["n"; "nowait"] ~doc)
   in
-  let doc = "Execute a script on a VM." in
+  let doc = "Execute a script on a XenServer 6.x VM." in
   let man = [
     `S "DESCRIPTION";
     `P "Execute a script on a VM."] @ help_secs
@@ -621,7 +688,7 @@ let ssh_cmd =
     let doc = "UUID or name of the VM." in
     Cli.Arg.(required & pos 0 (some string) None & info [] ~docs ~doc ~docv:"VM")
   in
-  let doc = "Execute a script on a VM." in
+  let doc = "Open an SSH session to a XenServer 6.x VM." in
   let man = [
     `S "DESCRIPTION";
     `P "Execute a script on a VM."] @ help_secs
@@ -638,7 +705,7 @@ let default_cmd =
 
 let cmds = [ vm_install_cmd; test_cmd; pool_install_cmd; template_clone_cmd; template_create_cmd; 
 	     template_destroy_cmd; template_list_cmd; add_rpms_cmd; exec_cmd; ssh_cmd;
-	     template_cache_cmd ]
+	     template_cache_cmd; cloudstack_template_create_cmd; cloudstack_install_cmd ]
 
 let () = 
   Printexc.record_backtrace true;
